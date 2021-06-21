@@ -1323,6 +1323,7 @@ module li_calving
       real (kind=RKIND), dimension(:), pointer :: angleEdge
       real (kind=RKIND), dimension(:), pointer :: thickness
       real (kind=RKIND), dimension(:), pointer :: calvingThickness
+      real (kind=RKIND), dimension(:), pointer :: surfaceSpeed
       integer, dimension(:,:), pointer :: cellsOnCell ! list of cells that neighbor each cell
       integer, dimension(:), pointer :: nEdgesOnCell ! number of cells that border each cell
       integer, dimension(:), pointer :: cellMask
@@ -1364,6 +1365,7 @@ module li_calving
          call mpas_pool_get_array(geometryPool, 'calvingVelocity', calvingVelocity)
          call mpas_pool_get_array(geometryPool, 'calvingVelocityData', calvingVelocityData)
          call mpas_pool_get_array(geometryPool, 'thickness', thickness)
+         call mpas_pool_get_array(velocityPool, 'surfaceSpeed', surfaceSpeed)
          call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
          call mpas_pool_get_array(meshPool, 'areaCell', areaCell)
          call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
@@ -1374,7 +1376,7 @@ module li_calving
          if (trim(config_calving_specified_source) == 'const') then
              calvingVelocity = config_calving_velocity_const
          elseif (trim(config_calving_specified_source) == 'data') then
-             calvingVelocity = calvingVelocityData
+             calvingVelocity = calvingVelocityData + surfaceSpeed
          else
             err = ior(err, 1)
             call mpas_log_write("Invalid value specified for option config_calving_specified_source" // &
