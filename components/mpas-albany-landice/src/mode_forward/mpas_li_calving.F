@@ -1759,6 +1759,7 @@ module li_calving
       real (kind=RKIND), dimension(:), pointer :: requiredAblationVolumeDynEdge, requiredAblationVolumeDynCell
       real (kind=RKIND), dimension(:), pointer :: ablatedVolumeNonDynCell, ablatedVolumeDynCell
       real (kind=RKIND), dimension(:), pointer :: unablatedVolumeNonDynCell, unablatedVolumeDynCell
+      real (kind=RKIND), pointer :: frontAblationFractionalError
       real (kind=RKIND), dimension(:), allocatable :: cellVolume
       real(kind=RKIND) :: ablationSubtotal1, ablationSubtotal2, ablationSubtotal3
       real(kind=RKIND) :: thkSum, ablationVelSum, uvelSum, vvelSum
@@ -1806,6 +1807,7 @@ module li_calving
       call mpas_pool_get_array(geometryPool, 'requiredAblationVolumeDynEdge', requiredAblationVolumeDynEdge)
       call mpas_pool_get_array(geometryPool, 'requiredAblationVolumeNonDynCell', requiredAblationVolumeNonDynCell)
       call mpas_pool_get_array(geometryPool, 'requiredAblationVolumeDynCell', requiredAblationVolumeDynCell)
+      call mpas_pool_get_array(geometryPool, 'frontAblationFractionalError', frontAblationFractionalError)
       call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
       call mpas_pool_get_array(meshPool, 'areaCell', areaCell)
       call mpas_pool_get_array(meshPool, 'deltat', deltat)
@@ -2255,6 +2257,9 @@ module li_calving
       localInfo(6) = sum(unablatedVolumeDynCell(1:nCellsSolve))
       ! NOTE: THIS WILL NOT WORK ON MULTIPLE BLOCKS PER PROCESSOR
       call mpas_dmpar_sum_real_array(domain % dminfo, 6, localInfo, globalInfo)
+
+      frontAblationFractionalError = (globalInfo(5) + globalInfo(6)) / (globalInfo(4) + 1.0e-30_RKIND)
+
       call mpas_log_write("== Ablation complete. Total calved                    = $r", realArgs = (/globalInfo(4)/))
       call mpas_log_write("==                   Ablated from non-dynamic cells   = $r", realArgs = (/globalInfo(1)/))
       call mpas_log_write("==                   Ablated from dynamic cells       = $r", realArgs = (/globalInfo(2)/))
@@ -2272,7 +2277,7 @@ module li_calving
                  "Try reducing time step or li_apply_front_ablation_velocity may need improvements.", &
                  MPAS_LOG_ERR, realArgs=(/globalInfo(5) + globalInfo(6), &
                  100.0_RKIND * (globalInfo(5) + globalInfo(6)) / (globalInfo(4)+1.0e-30_RKIND)/))
-         err_tmp = 1
+         !err_tmp = 1
          err = ior(err, err_tmp)
       endif
       if (globalInfo(3) / (globalInfo(4) + 1.0e-30_RKIND) > 0.01_RKIND) then
