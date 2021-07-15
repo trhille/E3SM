@@ -86,6 +86,18 @@
 		            description="If true, diffusivity of the channel is included in the CFL calculation for determining the time step.  This can require very small time steps (subsecond).  It is unclear if it is necessary and many runs have been stable without it."
 		            possible_values=".true. or .false."
 		/>
+                <nml_option name="config_SGH_adaptive_timestep_fraction_DCFL" type="real" default_value="1.0" units="unitless"
+                            description="CFL fraction to use when channel DCFL is active. Only used when config_switch_DCFL_on_day_of_year > 0 and/or config_switch_DCFL_off_day_of_year > 0"
+                            possible_values="positive real number"
+                />
+                <nml_option name="config_SGH_switch_DCFL_on_day_of_year" type="integer" default_value="0" units="days"
+                            description="Day of year to set config_SGH_chnl_include_DCFL = .true. Ignored if set to zero."
+                            possible_values="0 to 366"
+                />
+                <nml_option name="config_SGH_switch_DCFL_off_day_of_year" type="integer" default_value="0" units="days"
+                            description="Day of year to set config_SGH_chnl_include_DCFL = .off. Ignored if set to zero."
+                            possible_values="0 to 366"
+                />
                 <nml_option name="config_SGH_chnl_alpha" type="real" default_value="1.25" units="unitless"
 		            description="power of alpha parameter in subglacial water flux formula (in channels)"
 		            possible_values="positive real number"

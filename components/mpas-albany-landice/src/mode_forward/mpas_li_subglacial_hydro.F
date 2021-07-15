@@ -1028,6 +1028,8 @@ module li_subglacial_hydro
       real (kind=RKIND), pointer :: deltat
       integer, pointer :: nEdgesSolve
       logical, pointer :: config_SGH_chnl_active, config_SGH_chnl_include_DCFL
+      integer, pointer :: config_SGH_switch_DCFL_on_day_of_year, config_SGH_switch_DCFL_off_day_of_year
+      real (kind=RKIND), pointer :: DCFLfraction
       ! in the following variables, "Proc" indicates the value on the current processor,
       ! and "Block" indicates value on current block
       real (kind=RKIND) :: dtSGHadvecBlock, dtSGHadvecProc
@@ -1047,6 +1049,9 @@ module li_subglacial_hydro
       real(kind=RKIND), save :: minDtSoFar
       integer, save :: numDtLess1
       logical :: printDtInfo
+      type (MPAS_Time_Type) :: currTime
+      integer :: currentDay ! current model day of year for switching DCFL off and on
+      real(kind=RKIND) :: CFLfractionUse !don't overwrite namelist settings
 
 
       err = 0
@@ -1153,8 +1158,42 @@ module li_subglacial_hydro
       ! Find and set the new hydro subcycling dt
       ! ---
       call mpas_pool_get_config(liConfigs, 'config_SGH_adaptive_timestep_fraction', CFLfraction)
+      call mpas_pool_get_config(liConfigs, 'config_SGH_adaptive_timestep_fraction_DCFL', DCFLfraction)
       call mpas_pool_get_config(liConfigs, 'config_SGH_max_adaptive_timestep', maxDt)
       call mpas_pool_get_config(liConfigs, 'config_SGH_chnl_include_DCFL', config_SGH_chnl_include_DCFL)
+      call mpas_pool_get_config(liConfigs, 'config_SGH_switch_DCFL_on_day_of_year', config_SGH_switch_DCFL_on_day_of_year)
+      call mpas_pool_get_config(liConfigs, 'config_SGH_switch_DCFL_off_day_of_year', config_SGH_switch_DCFL_off_day_of_year)
+
+      ! Switch DCFL on and off based on model time if set in namelist
+      currTime = mpas_get_clock_time(domain % clock, MPAS_NOW, err_tmp)
+      call mpas_get_time(currTime, DoY=currentDay)
+      err = ior(err, err_tmp)
+
+      CFLfractionUse = CFLfraction
+
+      if (config_SGH_switch_DCFL_on_day_of_year > 0) then
+         ! If model time is within deltatSGH of DCFL_on time, turn on. Change CFL
+         ! fraction to config_CFL_fraction_include_DCFL
+         if ( (currentDay .ge. config_SGH_switch_DCFL_on_day_of_year) &
+             .and. ((config_SGH_switch_DCFL_off_day_of_year .lt. &
+             config_SGH_switch_DCFL_on_day_of_year) .or. (currentDay &
+             .lt. config_SGH_switch_DCFL_off_day_of_year)) )  then
+            config_SGH_chnl_include_DCFL = .true.
+            CFLfractionUse = DCFLfraction
+         endif
+      end if
+
+      if (config_SGH_switch_DCFL_off_day_of_year > 0) then
+         ! If model time is within deltatSGH of DCFL_off time, turn off. Change CFL
+         ! faction to config_SGH_adaptive_timestep_fraction
+         if ( (currentDay .ge. config_SGH_switch_DCFL_off_day_of_year) &
+             .and. ((config_SGH_switch_DCFL_on_day_of_year .lt. &
+             config_SGH_switch_DCFL_off_day_of_year) .or. (currentDay &
+             .lt. config_SGH_switch_DCFL_on_day_of_year)) )  then
+            config_SGH_chnl_include_DCFL = .false.
+            CFLfractionUse = CFLfraction
+         endif
+      end if
 
       ! Find smallest of 3 or 5 limiting time steps
       proposedDt = min(deltatSGHadvec, deltatSGHdiffu, deltatSGHpressure)
@@ -1164,7 +1203,7 @@ module li_subglacial_hydro
             proposedDt = min(proposedDt, deltatSGHdiffuChannel)
          endif
       endif
-      proposedDt = proposedDt * CFLfraction
+      proposedDt = proposedDt * CFLfractionUse
 
       if (proposedDt < 1.0_RKIND) then
          numDtLess1 = numDtLess1 + 1
@@ -1287,22 +1326,24 @@ module li_subglacial_hydro
 
 
       ! compare timesteps
-      if (deltatSGH > deltatSGHadvec) then
-         call mpas_log_write("deltatSGH > deltatSGHadvec  $r > $r", MPAS_LOG_WARN, realArgs=(/deltatSGH, deltatSGHadvec/))
-      endif
-      if (deltatSGH > deltatSGHdiffu) then
-         call mpas_log_write("deltatSGH > deltatSGHdiffu  $r > $r", MPAS_LOG_WARN, realArgs=(/deltatSGH, deltatSGHdiffu/))
-      endif
-      if (deltatSGH > deltatSGHpressure) then
-         call mpas_log_write("deltatSGH > deltatSGHpressure  $r > $r", MPAS_LOG_WARN, realArgs=(/deltatSGH, deltatSGHpressure/))
-      endif
-      if (config_SGH_chnl_active .and. (deltatSGH > deltatSGHadvecChannel)) then
-         call mpas_log_write("deltatSGH > deltatSGHadvecChannel  $r > $r", MPAS_LOG_WARN, &
-            realArgs=(/deltatSGH, deltatSGHadvecChannel/))
-      endif
-      if (config_SGH_chnl_active .and. config_SGH_chnl_include_DCFL .and. (deltatSGH > deltatSGHdiffuChannel)) then
-         call mpas_log_write("deltatSGH > deltatSGHdiffuChannel  $r > $r", MPAS_LOG_WARN, &
-            realArgs=(/deltatSGH, deltatSGHdiffuChannel/))
+      if ( (CFLfraction <= 1.0) .and. (DCFLfraction <=1.0) ) then  !prevent verbose warnings when CFL fraction is intentionally set > 1
+         if (deltatSGH > deltatSGHadvec) then
+            call mpas_log_write("deltatSGH > deltatSGHadvec  $r > $r", MPAS_LOG_WARN, realArgs=(/deltatSGH, deltatSGHadvec/))
+         endif
+         if (deltatSGH > deltatSGHdiffu) then
+            call mpas_log_write("deltatSGH > deltatSGHdiffu  $r > $r", MPAS_LOG_WARN, realArgs=(/deltatSGH, deltatSGHdiffu/))
+         endif
+         if (deltatSGH > deltatSGHpressure) then
+            call mpas_log_write("deltatSGH > deltatSGHpressure  $r > $r", MPAS_LOG_WARN, realArgs=(/deltatSGH, deltatSGHpressure/))
+         endif
+         if (config_SGH_chnl_active .and. (deltatSGH > deltatSGHadvecChannel)) then
+            call mpas_log_write("deltatSGH > deltatSGHadvecChannel  $r > $r", MPAS_LOG_WARN, &
+               realArgs=(/deltatSGH, deltatSGHadvecChannel/))
+         endif
+         if (config_SGH_chnl_active .and. config_SGH_chnl_include_DCFL .and. (deltatSGH > deltatSGHdiffuChannel)) then
+            call mpas_log_write("deltatSGH > deltatSGHdiffuChannel  $r > $r", MPAS_LOG_WARN, &
+               realArgs=(/deltatSGH, deltatSGHdiffuChannel/))
+         endif
       endif
 
 
