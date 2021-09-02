@@ -1130,8 +1130,10 @@ module li_calving
       type (mpas_pool_type), pointer :: meshPool
       type (mpas_pool_type), pointer :: velocityPool
       type (mpas_pool_type), pointer :: scratchPool
-      real(kind=RKIND), pointer :: config_calving_eigencalving_parameter_scalar_value
+      real(kind=RKIND), pointer :: config_calving_eigencalving_parameter_scalar_value, &
+                                   config_damage_calving_threshold
       character (len=StrKIND), pointer :: config_calving_eigencalving_parameter_source
+      logical, pointer :: config_use_damage_calving_multiplier
       logical, pointer :: config_print_calving_info
       real(kind=RKIND), pointer :: config_calving_thickness
       real (kind=RKIND), dimension(:), pointer :: eigencalvingParameter
@@ -1139,6 +1141,7 @@ module li_calving
       real (kind=RKIND), dimension(:), pointer :: eMax, eMin
       real (kind=RKIND), dimension(:), pointer :: angleEdge
       real (kind=RKIND), dimension(:), pointer :: thickness
+      real (kind=RKIND), dimension(:), pointer :: damage
       real (kind=RKIND), dimension(:), pointer :: calvingThickness
       integer, dimension(:,:), pointer :: cellsOnCell ! list of cells that neighbor each cell
       integer, dimension(:), pointer :: nEdgesOnCell ! number of cells that border each cell
@@ -1157,7 +1160,7 @@ module li_calving
       err = 0
 
       ! Logical arrays needed for apply_ablation_velocity
-      applyToGrounded = .true.
+      applyToGrounded = .false.
       applyToFloating = .true.
       applyToGroundingLine = .false.
 
@@ -1167,7 +1170,8 @@ module li_calving
       call mpas_pool_get_config(liConfigs, 'config_calving_eigencalving_parameter_source', &
               config_calving_eigencalving_parameter_source)
       call mpas_pool_get_config(liConfigs, 'config_calving_thickness', config_calving_thickness)
-
+      call mpas_pool_get_config(liConfigs, 'config_use_damage_calving_multiplier', config_use_damage_calving_multiplier)
+      call mpas_pool_get_config(liConfigs, 'config_damage_calving_threshold', config_damage_calving_threshold)
       ! block loop
       block => domain % blocklist
       do while (associated(block))
@@ -1188,6 +1192,7 @@ module li_calving
          call mpas_pool_get_array(geometryPool, 'calvingFrontMask', calvingFrontMask)
          call mpas_pool_get_array(geometryPool, 'eigencalvingParameter', eigencalvingParameter)
          call mpas_pool_get_array(geometryPool, 'calvingVelocity', calvingVelocity)
+         call mpas_pool_get_array(geometryPool, 'damage', damage)
          call mpas_pool_get_array(velocityPool, 'eMax', eMax)
          call mpas_pool_get_array(velocityPool, 'eMin', eMin)
          call mpas_pool_get_array(geometryPool, 'thickness', thickness)
@@ -1213,17 +1218,34 @@ module li_calving
                     realArgs=(/minval(eigencalvingParameter), maxval(eigencalvingParameter)/))
          endif
 
+         ! calculate damage if desired
+         if ( config_use_damage_calving_multiplier ) then
+            if ( config_damage_calving_threshold == 1.0_RKIND ) then
+                 call mpas_log_write("config_damage_calving_threshold must be <1.0 to &
+                                     use config_use_damage_calving_multiplier", MPAS_LOG_ERR)
+                 err = 1
+            endif
+            ! remove ice exceeding damage threshold
+            call mpas_log_write('config_use_damage_calving_multiplier == .true.; &
+                                removing ice with damage > $r', realArgs=(/config_damage_calving_threshold/))
+            call apply_calving_damage_threshold(meshPool, geometryPool, scratchPool, domain, err_tmp)
+            err = ior(err, err_tmp)
+         else
+            damage(:) = 0.0_RKIND
+         endif
+
          ! update mask
          call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
          err = ior(err, err_tmp)
 
          calvingVelocity(:) = 0.0_RKIND
          ! First calculate the front retreat rate (Levermann eq. 1)
-         calvingVelocity(:) = eigencalvingParameter(:) * max(0.0_RKIND, eMax(:)) * max(0.0_RKIND, eMin(:)) ! m/s
+         calvingVelocity(:) = eigencalvingParameter(:) * max(0.0_RKIND, eMax(:)) * max(0.0_RKIND, eMin(:)) &
+                              / (1.0_RKIND - min(damage(:), config_damage_calving_threshold)) ! m/s
 
          call mpas_log_write("calling li_apply_front_ablation_velocity from eigencalving")
-          ! Convert calvingVelocity to calvingThickness
-          call li_apply_front_ablation_velocity(meshPool, geometryPool, velocityPool, &
+         ! Convert calvingVelocity to calvingThickness
+         call li_apply_front_ablation_velocity(meshPool, geometryPool, velocityPool, &
                                               calvingThickness, calvingVelocity, applyToGrounded, &
                                               applyToFloating, applyToGroundingLine, domain, err)
          ! Update halos on calvingThickness or faceMeltingThickness before
@@ -1516,8 +1538,9 @@ module li_calving
                                         velocityPool, scratchPool, thermalPool
       real (kind=RKIND), pointer :: config_grounded_von_Mises_threshold_stress, &
                                     config_floating_von_Mises_threshold_stress, &
-                                    config_flowLawExponent, config_calving_speed_limit
-      logical, pointer :: config_use_Albany_flowA_eqn_for_vM
+                                    config_flowLawExponent, config_calving_speed_limit, &
+                                    config_damage_calving_threshold
+      logical, pointer :: config_use_Albany_flowA_eqn_for_vM, config_use_damage_calving_multiplier
       real (kind=RKIND), dimension(:), pointer :: eMax, eMin, &
                                         calvingVelocity, thickness, &
                                         xvelmean, yvelmean, calvingThickness
@@ -1526,7 +1549,7 @@ module li_calving
       real (kind=RKIND), pointer :: config_default_flowParamA
       integer, pointer :: nCells
       integer, dimension(:), pointer :: cellMask
-      real (kind=RKIND), dimension(:), pointer :: vonMisesStress
+      real (kind=RKIND), dimension(:), pointer :: vonMisesStress, damage
       logical :: applyToGrounded, applyToFloating, applyToGroundingLine
 
       err = 0
@@ -1539,6 +1562,8 @@ module li_calving
       call mpas_pool_get_config(liConfigs, 'config_grounded_von_Mises_threshold_stress', config_grounded_von_Mises_threshold_stress)
       call mpas_pool_get_config(liConfigs, 'config_floating_von_Mises_threshold_stress', config_floating_von_Mises_threshold_stress)
       call mpas_pool_get_config(liConfigs, 'config_calving_speed_limit', config_calving_speed_limit)
+      call mpas_pool_get_config(liConfigs, 'config_use_damage_calving_multiplier', config_use_damage_calving_multiplier)
+      call mpas_pool_get_config(liConfigs, 'config_damage_calving_threshold', config_damage_calving_threshold)
 
       if ( config_grounded_von_Mises_threshold_stress <=  0.0_RKIND ) then
          call mpas_log_write("config_grounded_von_Mises_threshold_stress must be >0.0", MPAS_LOG_ERR)
@@ -1565,6 +1590,7 @@ module li_calving
           call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
           call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
           call mpas_pool_get_array(geometryPool, 'layerThickness', layerThickness)
+          call mpas_pool_get_array(geometryPool, 'damage', damage)
           call mpas_pool_get_array(velocityPool, 'eMax', eMax)
           call mpas_pool_get_array(velocityPool, 'eMin', eMin)
           call mpas_pool_get_array(velocityPool, 'vonMisesStress', vonMisesStress)
@@ -1587,11 +1613,20 @@ module li_calving
              call li_calculate_flowParamA(meshPool, temperature, thickness,flowParamA,err) ! Get MPAS flowParamA
           endif
 
-         !Using a depth-averaged ice viscosity parameter B_depthAvg
-         !=sum(layerThickness(:,iCell) *
-         !flowParamA(:,iCell)**(-1.0_RKIND/config_flowLawExponent), dim=1) /
-         !thickness(iCell)
-         ! Calculate effective von  Mises stress.
+          ! calculate damage if desired
+          if ( .not. config_use_damage_calving_multiplier ) then
+             damage(:) = 0.0_RKIND
+          endif
+
+          ! update mask
+          call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+          err = ior(err, err_tmp)
+
+          !Using a depth-averaged ice viscosity parameter B_depthAvg
+          !=sum(layerThickness(:,iCell) *
+          !flowParamA(:,iCell)**(-1.0_RKIND/config_flowLawExponent), dim=1) /
+          !thickness(iCell)
+          ! Calculate effective von  Mises stress.
           calvingVelocity(:) = 0.0_RKIND
 
           do iCell = 1,nCells
@@ -1603,15 +1638,20 @@ module li_calving
              endif
 
              ! Calculate calving velocity for grounded cells at marine margin
+             ! Do not allow damage to exceed threshold value for calculating calving velocity.
+             ! This will prevent very large calving velocities a few cells from the calving front that
+             ! could be propagated forward by li_apply_front_ablation_velocity
              if ( .not. li_mask_is_floating_ice(cellMask(iCell)) ) then
                 calvingVelocity(iCell) = min(sqrt(xvelmean(iCell)**2.0_RKIND + yvelmean(iCell)**2.0_RKIND) * &
-                                         vonMisesStress(iCell) / config_grounded_von_Mises_threshold_stress, config_calving_speed_limit)
+                                         vonMisesStress(iCell) / config_grounded_von_Mises_threshold_stress / &
+                                         (1.0_RKIND - min(damage(iCell), config_damage_calving_threshold)), config_calving_speed_limit)
              ! If config_floating_von_Mises_threshold_stress is not 0.0, calculate
              ! calvingVelocity. If config_floating_von_Mises_threshold_stress is
              ! 0.0, remove floating ice in loop below.
              elseif ( li_mask_is_floating_ice(cellMask(iCell)) .and. config_floating_von_Mises_threshold_stress .ne. 0.0_RKIND) then
                 calvingVelocity(iCell) = min(sqrt(xvelmean(iCell)**2 + yvelmean(iCell)**2) * &
-                                         vonMisesStress(iCell) / config_floating_von_Mises_threshold_stress, config_calving_speed_limit)
+                                         vonMisesStress(iCell) / config_floating_von_Mises_threshold_stress / &
+                                         (1.0_RKIND - min(damage(iCell), config_damage_calving_threshold)), config_calving_speed_limit)
              endif
           enddo
 
@@ -1656,8 +1696,21 @@ module li_calving
                 endif
              enddo
           endif
+            
+          ! calculate damage if desired
+          if ( config_use_damage_calving_multiplier ) then
+             if ( config_damage_calving_threshold == 1.0_RKIND ) then
+                  call mpas_log_write("config_damage_calving_threshold must be <1.0 to &
+                                      use config_use_damage_calving_multiplier", MPAS_LOG_ERR)
+                  err = 1
+             endif
 
-
+             ! remove ice exceeding damage threshold
+             call mpas_log_write('config_use_damage_calving_multiplier == .true.; &
+                                 removing ice with damage > $r', realArgs=(/config_damage_calving_threshold/))
+             call apply_calving_damage_threshold(meshPool, geometryPool, scratchPool, domain, err_tmp)
+             err = ior(err, err_tmp)
+          endif 
           ! === apply calving ===
           thickness(:) = thickness(:) - calvingThickness(:)
 
