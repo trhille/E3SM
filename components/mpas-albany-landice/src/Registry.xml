@@ -141,7 +141,7 @@
 			    possible_values="'.true.', '.false.'"
 		/>
 	        <nml_option name="config_use_damage_calving_multiplier" type="logical" default_value=".false." units="unitless"
-			    description="apply a multiplier of 1 / (1 - damage) to calvingVelocity calculation. Currently only supported for von_Mises_stress and eigencalving. Also requires setting config_damage_threshold <1.0 to prevent divide-by-zero."
+			    description="Apply a multiplier of 1 / (1 - damage) to calvingVelocity calculation. Currently only supported for von_Mises_stress and eigencalving. Also requires setting config_damage_threshold <1.0 to prevent divide-by-zero. Set config_damage_calving_method to 'threshold' if you want to call apply_calving_damage_threshold after von Mises or eigencalving routines calculate calving rate. If you do not wish ice damaged above threshold value to be removed, set config_damage_calving_method to 'calving_rate'."
 			    possible_values="'.true.', '.false.'"
                 />    
 		<nml_option name="config_calving_topography" type="real" default_value="-500.0" units="m"

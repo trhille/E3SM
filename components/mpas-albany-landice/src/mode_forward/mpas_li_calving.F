@@ -1540,6 +1540,7 @@ module li_calving
                                     config_floating_von_Mises_threshold_stress, &
                                     config_flowLawExponent, config_calving_speed_limit, &
                                     config_damage_calving_threshold
+      character (len=StrKIND), pointer :: config_damage_calving_method
       logical, pointer :: config_use_Albany_flowA_eqn_for_vM, config_use_damage_calving_multiplier
       real (kind=RKIND), dimension(:), pointer :: eMax, eMin, &
                                         calvingVelocity, thickness, &
@@ -1549,6 +1550,7 @@ module li_calving
       real (kind=RKIND), pointer :: config_default_flowParamA
       integer, pointer :: nCells
       integer, dimension(:), pointer :: cellMask
+      real (kind=RKIND), dimension(:), allocatable :: damageForCalving
       real (kind=RKIND), dimension(:), pointer :: vonMisesStress, damage
       logical :: applyToGrounded, applyToFloating, applyToGroundingLine
 
@@ -1564,6 +1566,7 @@ module li_calving
       call mpas_pool_get_config(liConfigs, 'config_calving_speed_limit', config_calving_speed_limit)
       call mpas_pool_get_config(liConfigs, 'config_use_damage_calving_multiplier', config_use_damage_calving_multiplier)
       call mpas_pool_get_config(liConfigs, 'config_damage_calving_threshold', config_damage_calving_threshold)
+      call mpas_pool_get_config(liConfigs, 'config_damage_calving_method', config_damage_calving_method)
 
       if ( config_grounded_von_Mises_threshold_stress <=  0.0_RKIND ) then
          call mpas_log_write("config_grounded_von_Mises_threshold_stress must be >0.0", MPAS_LOG_ERR)
@@ -1602,8 +1605,9 @@ module li_calving
           call mpas_pool_get_array(geometryPool, 'thickness', thickness)
           call mpas_pool_get_array(thermalPool, 'temperature', temperature)
 
+          allocate(damageForCalving(nCells + 1))
           vonMisesStress(:) = 0.0_RKIND
-
+          
           ! get flowParamA from MPAS or use Albany-like equation
           if ( config_use_Albany_flowA_eqn_for_vM ) then
           !calculate Albany-type flowParamA
@@ -1614,8 +1618,10 @@ module li_calving
           endif
 
           ! calculate damage if desired
-          if ( .not. config_use_damage_calving_multiplier ) then
-             damage(:) = 0.0_RKIND
+          if ( config_use_damage_calving_multiplier ) then
+             damageForCalving(:) = damage(:)             
+          else
+             damageForCalving(:) = 0.0_RKIND
           endif
 
           ! update mask
@@ -1644,14 +1650,14 @@ module li_calving
              if ( .not. li_mask_is_floating_ice(cellMask(iCell)) ) then
                 calvingVelocity(iCell) = min(sqrt(xvelmean(iCell)**2.0_RKIND + yvelmean(iCell)**2.0_RKIND) * &
                                          vonMisesStress(iCell) / config_grounded_von_Mises_threshold_stress / &
-                                         (1.0_RKIND - min(damage(iCell), config_damage_calving_threshold)), config_calving_speed_limit)
+                                         (1.0_RKIND - min(damageForCalving(iCell), config_damage_calving_threshold)), config_calving_speed_limit)
              ! If config_floating_von_Mises_threshold_stress is not 0.0, calculate
              ! calvingVelocity. If config_floating_von_Mises_threshold_stress is
              ! 0.0, remove floating ice in loop below.
              elseif ( li_mask_is_floating_ice(cellMask(iCell)) .and. config_floating_von_Mises_threshold_stress .ne. 0.0_RKIND) then
                 calvingVelocity(iCell) = min(sqrt(xvelmean(iCell)**2 + yvelmean(iCell)**2) * &
                                          vonMisesStress(iCell) / config_floating_von_Mises_threshold_stress / &
-                                         (1.0_RKIND - min(damage(iCell), config_damage_calving_threshold)), config_calving_speed_limit)
+                                         (1.0_RKIND - min(damageForCalving(iCell), config_damage_calving_threshold)), config_calving_speed_limit)
              endif
           enddo
 
@@ -1697,20 +1703,23 @@ module li_calving
              enddo
           endif
             
-          ! calculate damage if desired
-          if ( config_use_damage_calving_multiplier ) then
-             if ( config_damage_calving_threshold == 1.0_RKIND ) then
-                  call mpas_log_write("config_damage_calving_threshold must be <1.0 to &
-                                      use config_use_damage_calving_multiplier", MPAS_LOG_ERR)
-                  err = 1
-             endif
+          ! Check damage threshold
+          if ( (config_use_damage_calving_multiplier) .and. (config_damage_calving_threshold .ge. 1.0_RKIND) ) then
+               call mpas_log_write("config_damage_calving_threshold must be <1.0 to &
+                                   use config_use_damage_calving_multiplier", MPAS_LOG_ERR)
+               err = 1
+          endif
 
+          if ( trim(config_damage_calving_method) == 'threshold' ) then
              ! remove ice exceeding damage threshold
              call mpas_log_write('config_use_damage_calving_multiplier == .true.; &
-                                 removing ice with damage > $r', realArgs=(/config_damage_calving_threshold/))
+                                  config_damage_calving_method == threshold; &
+                                  removing ice with damage > $r', realArgs=(/config_damage_calving_threshold/))
+            
              call apply_calving_damage_threshold(meshPool, geometryPool, scratchPool, domain, err_tmp)
              err = ior(err, err_tmp)
-          endif 
+          endif
+
           ! === apply calving ===
           thickness(:) = thickness(:) - calvingThickness(:)
 
@@ -1719,6 +1728,8 @@ module li_calving
           err = ior(err, err_tmp)
 
           call remove_small_islands(meshPool, geometryPool)
+          
+          deallocate(damageForCalving)
 
           block => block % next
 
