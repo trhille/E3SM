@@ -1135,6 +1135,7 @@ module li_calving
                                    config_damage_calving_threshold
       character (len=StrKIND), pointer :: config_calving_eigencalving_parameter_source
       logical, pointer :: config_use_damage_calving_multiplier
+      character (len=StrKIND), pointer :: config_damage_calving_method
       logical, pointer :: config_print_calving_info
       real(kind=RKIND), pointer :: config_calving_thickness
       real (kind=RKIND), dimension(:), pointer :: eigencalvingParameter
@@ -1144,6 +1145,7 @@ module li_calving
       real (kind=RKIND), dimension(:), pointer :: thickness
       real (kind=RKIND), dimension(:), pointer :: damage
       real (kind=RKIND), dimension(:), pointer :: calvingThickness
+      real (kind=RKIND), dimension(:), allocatable :: damageForCalving
       integer, dimension(:,:), pointer :: cellsOnCell ! list of cells that neighbor each cell
       integer, dimension(:), pointer :: nEdgesOnCell ! number of cells that border each cell
       integer, dimension(:), pointer :: cellMask
@@ -1173,6 +1175,8 @@ module li_calving
       call mpas_pool_get_config(liConfigs, 'config_calving_thickness', config_calving_thickness)
       call mpas_pool_get_config(liConfigs, 'config_use_damage_calving_multiplier', config_use_damage_calving_multiplier)
       call mpas_pool_get_config(liConfigs, 'config_damage_calving_threshold', config_damage_calving_threshold)
+      call mpas_pool_get_config(liConfigs, 'config_damage_calving_method', config_damage_calving_method)
+
       ! block loop
       block => domain % blocklist
       do while (associated(block))
@@ -1202,6 +1206,7 @@ module li_calving
          call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
          call mpas_pool_get_array(meshPool, 'cellsOnCell', cellsOnCell)
 
+         allocate(damageForCalving(nCells + 1))
 
          ! get parameter value
          if (trim(config_calving_eigencalving_parameter_source) == 'scalar') then
@@ -1219,21 +1224,12 @@ module li_calving
                     realArgs=(/minval(eigencalvingParameter), maxval(eigencalvingParameter)/))
          endif
 
-         ! calculate damage if desired
-         if ( config_use_damage_calving_multiplier ) then
-            if ( config_damage_calving_threshold == 1.0_RKIND ) then
-                 call mpas_log_write("config_damage_calving_threshold must be <1.0 to &
-                                     use config_use_damage_calving_multiplier", MPAS_LOG_ERR)
-                 err = 1
-            endif
-            ! remove ice exceeding damage threshold
-            call mpas_log_write('config_use_damage_calving_multiplier == .true.; &
-                                removing ice with damage > $r', realArgs=(/config_damage_calving_threshold/))
-            call apply_calving_damage_threshold(meshPool, geometryPool, scratchPool, domain, err_tmp)
-            err = ior(err, err_tmp)
-         else
-            damage(:) = 0.0_RKIND
-         endif
+          ! calculate damage if desired
+          if ( config_use_damage_calving_multiplier ) then
+             damageForCalving(:) = damage(:)
+          else
+             damageForCalving(:) = 0.0_RKIND
+          endif
 
          ! update mask
          call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
@@ -1242,13 +1238,28 @@ module li_calving
          calvingVelocity(:) = 0.0_RKIND
          ! First calculate the front retreat rate (Levermann eq. 1)
          calvingVelocity(:) = eigencalvingParameter(:) * max(0.0_RKIND, eMax(:)) * max(0.0_RKIND, eMin(:)) &
-                              / (1.0_RKIND - min(damage(:), config_damage_calving_threshold)) ! m/s
+                              / (1.0_RKIND - min(damageForCalving(:), config_damage_calving_threshold)) ! m/s
 
          call mpas_log_write("calling li_apply_front_ablation_velocity from eigencalving")
          ! Convert calvingVelocity to calvingThickness
          call li_apply_front_ablation_velocity(meshPool, geometryPool, velocityPool, &
                                               calvingThickness, calvingVelocity, applyToGrounded, &
                                               applyToFloating, applyToGroundingLine, domain, err)
+
+         ! Check damage threshold
+         if ( (config_use_damage_calving_multiplier) .and. (config_damage_calving_threshold .ge. 1.0_RKIND) ) then
+            call mpas_log_write("config_damage_calving_threshold must be <1.0 to &
+                                   use config_use_damage_calving_multiplier", MPAS_LOG_ERR)
+            err = 1
+         endif
+         if ( trim(config_damage_calving_method) == 'threshold' ) then
+             ! remove ice exceeding damage threshold
+            call mpas_log_write(' config_damage_calving_method == threshold; &
+                                  removing ice with damage > $r', realArgs=(/config_damage_calving_threshold/))
+            
+            call apply_calving_damage_threshold(meshPool, geometryPool, scratchPool, domain, err_tmp)
+            err = ior(err, err_tmp)
+         endif
          ! Update halos on calvingThickness or faceMeltingThickness before
          ! applying it.
          ! Testing seemed to indicate this is not necessary, but I don't
@@ -1258,7 +1269,6 @@ module li_calving
          call mpas_timer_start("halo updates")
          call mpas_dmpar_field_halo_exch(domain, 'calvingThickness')
          call mpas_timer_stop("halo updates")
-
          ! === apply calving ===
          thickness(:) = thickness(:) - calvingThickness(:)
 
@@ -1312,6 +1322,8 @@ module li_calving
          ! TODO: global reduce & reporting on amount of calving generated in this step
 
          call remove_small_islands(meshPool, geometryPool)
+
+         deallocate(damageForCalving)
 
          block => block % next
       enddo
@@ -1668,15 +1680,6 @@ module li_calving
           call li_apply_front_ablation_velocity(meshPool, geometryPool,velocityPool, &
                                               calvingThickness, calvingVelocity, applyToGrounded, &
                                               applyToFloating, applyToGroundingLine, domain, err)
-         ! Update halos on calvingThickness or faceMeltingThickness before
-         ! applying it.
-         ! Testing seemed to indicate this is not necessary, but I don't
-         ! understand
-         ! why not, so leaving it.
-         ! NOTE: THIS WILL NOT WORK ON MULTIPLE BLOCKS PER PROCESSOR
-         call mpas_timer_start("halo updates")
-         call mpas_dmpar_field_halo_exch(domain, 'calvingThickness')
-         call mpas_timer_stop("halo updates")
 
           ! If floating VM threshold is zero, remove floating ice. Remove
           ! non-dynamic cells adjacent to floating ice, but leave
@@ -1713,13 +1716,22 @@ module li_calving
 
           if ( trim(config_damage_calving_method) == 'threshold' ) then
              ! remove ice exceeding damage threshold
-             call mpas_log_write('config_use_damage_calving_multiplier == .true.; &
-                                  config_damage_calving_method == threshold; &
+             call mpas_log_write('config_damage_calving_method == threshold; &
                                   removing ice with damage > $r', realArgs=(/config_damage_calving_threshold/))
             
              call apply_calving_damage_threshold(meshPool, geometryPool, scratchPool, domain, err_tmp)
              err = ior(err, err_tmp)
           endif
+
+          ! Update halos on calvingThickness or faceMeltingThickness before
+          ! applying it.
+          ! Testing seemed to indicate this is not necessary, but I don't
+          ! understand
+          ! why not, so leaving it.
+          ! NOTE: THIS WILL NOT WORK ON MULTIPLE BLOCKS PER PROCESSOR
+          call mpas_timer_start("halo updates")
+          call mpas_dmpar_field_halo_exch(domain, 'calvingThickness')
+          call mpas_timer_stop("halo updates")
 
           ! === apply calving ===
           thickness(:) = thickness(:) - calvingThickness(:)
