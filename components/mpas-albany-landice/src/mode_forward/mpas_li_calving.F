@@ -1747,7 +1747,7 @@ module li_calving
       real (kind=RKIND) :: deltatForcing ! time between forcing updates
       type (MPAS_Time_Type), save :: forcingTime, forcingTimeOld
       character (len=StrKIND), pointer :: xtime, simulationStartTime
-      character(len=StrKIND) :: forcingTimeStamp, forcingTimeOldStamp
+      character(len=StrKIND) :: forcingTimeStamp, forcingTimeOldStamp, mostRecentAccessTimeStamp
       type (MPAS_stream_list_type), pointer :: stream_cursor
 
       applyToGrounded = .true.
@@ -1789,6 +1789,8 @@ module li_calving
       stream_cursor => domain % streamManager % streams % head
       do while (associated(stream_cursor))
          if (trim(stream_cursor % name) == 'ismip-gis') then
+               call mpas_get_time(stream_cursor%mostRecentAccessTime, dateTimeString=mostRecentAccessTimeStamp)
+               call mpas_log_write("mostRecentAccessTime: " // trim(mostRecentAccessTimeStamp))
             if (xtime == simulationStartTime) then
                ! At the beginning of the simulations, force a read of this stream,
                ! and use the most recent time available in the file.
