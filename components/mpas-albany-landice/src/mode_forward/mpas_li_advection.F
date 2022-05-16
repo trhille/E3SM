@@ -82,6 +82,7 @@ module li_advection
         geometryPool,           &
         thermalPool,            &
         scratchPool,            &
+        domain,                 &
         err,                    &
         advectTracersIn)
 
@@ -111,10 +112,11 @@ module li_advection
       !-----------------------------------------------------------------
       type (domain_type), intent(inout) :: domain  !< Input/Output: domain object
 
+      type (domain_type), intent(inout) :: domain
+
       type (mpas_pool_type), intent(inout) :: &
            velocityPool           !< Input/output: velocity information
                                   !                (needs to be inout for li_calculate_mask call
-
       type (mpas_pool_type), intent(inout) :: &
            geometryPool           !< Input/output: geometry information to be updated
 
@@ -367,7 +369,7 @@ module li_advection
       call li_calculate_layerThickness(meshPool, thickness, layerThickness)
 
       ! update masks
-      call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+      call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
       err = ior(err, err_tmp)
 
       ! save old copycellMask for determining cells changing from grounded to floating and vice versa
@@ -543,7 +545,7 @@ module li_advection
          ! Update the thickness and cellMask before applying the mass balance.
          ! The update is needed because the SMB and BMB depend on whether ice is present.
          thickness = sum(layerThickness, 1)
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
 
 
 
@@ -627,7 +629,7 @@ module li_advection
             enddo
          endif
 
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
 
          ! Calculate flux across grounding line

@@ -1201,6 +1201,12 @@ is the value of that variable from the *previous* time level!
                 <var name="cellMask" type="integer" dimensions="nCells Time" units="none"
                      description="bitmask indicating various properties about the ice sheet on cells.  cellMask only needs to be a restart field if config_allow_additional_advance = false (to keep the mask of initial ice extent)"
                 />
+                <var name="groundedMaskForMassBudget" type="integer" dimensions="nCells Time" units="none"
+                     description="bitmask indicating where ice is considered grounded for mass budget calculation. Includes floating non-dynamic cells adjacent to grounded ice and floating ice above subglacial lakes."
+                />
+                <var name="floatingMaskForMassBudget" type="integer" dimensions="nCells Time" units="none"
+                     description="bitmask indicating where ice is considered floating for mass budget calculation. Does not include floating non-dynamic cells adjacent to grounded ice or floating ice above subglacial lakes."
+                />
                 <var name="edgeMask" type="integer" dimensions="nEdges Time" units="none"
                      description="bitmask indicating various properties about the ice sheet on edges."
                 />
