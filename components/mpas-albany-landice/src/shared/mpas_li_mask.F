@@ -364,6 +364,8 @@ contains
       ! For now floating ice and grounded ice are mutually exclusive.
       ! This may change if a grounding line parameterization is added.
       ! Initialize grounded and floating masks for mass budget as well.
+      floatingMaskForMassBudget(:) = 0
+      groundedMaskForMassBudget(:) = 0
       where (  li_mask_is_ice(cellMask) .and. (config_ice_density / config_ocean_density * thickness) <= &
                (config_sea_level - bedTopography) )
           cellMask = ior(cellMask, li_mask_ValueFloating)
