@@ -128,9 +128,13 @@ module li_calving
            bedTopography       ! bed topography (negative below sea level)
 
       real (kind=RKIND), dimension(:), pointer :: &
-           calvingThickness    ! thickness of ice that calves (computed in this subroutine)
-                               ! typically the entire ice thickness, but will be a fraction of the thickness
-                               ! if calving_timescale > dt
+           calvingThickness, &    ! thickness of ice that calves (computed in this subroutine)
+                                  ! typically the entire ice thickness, but will be a fraction of the thickness
+                                  ! if calving_timescale > dt
+           groundedCalvingThickness, & ! Grounded and floating components for mass budget
+           floatingCalvingThickness
+      integer, dimension(:), pointer :: groundedMaskForMassBudget, & ! binary masks for mass budget
+                                        floatingMaskForMassBudget
 
       real (kind=RKIND), dimension(:), pointer :: &
            calvingThicknessFromThreshold   ! thickness of ice that calves from threshold processes (computed in this subroutine)
@@ -338,6 +342,8 @@ module li_calving
          call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
          call mpas_pool_get_array(geometryPool, 'thickness', thickness)
          call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
+         call mpas_pool_get_array(geometryPool, 'groundedCalvingThickness', groundedCalvingThickness)
+         call mpas_pool_get_array(geometryPool, 'floatingCalvingThickness', floatingCalvingThickness)
          call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
 
          ! In data calving mode we just calculate what should be calved but don't actually calve it.
@@ -367,6 +373,20 @@ module li_calving
          call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
          err = ior(err, err_tmp)
          call li_update_geometry(geometryPool)
+         ! necessary to get these after masks have been updated
+         call mpas_pool_get_array(geometryPool, 'groundedMaskForMassBudget', groundedMaskForMassBudget)
+         call mpas_pool_get_array(geometryPool, 'floatingMaskForMassBudget', floatingMaskForMassBudget)
+
+         groundedCalvingThickness(:) = 0.0_RKIND
+         floatingCalvingThickness(:) = 0.0_RKIND
+         where (groundedMaskForMassBudget .eq. 1)
+             groundedCalvingThickness = calvingThickness
+         elsewhere (floatingMaskForMassBudget .eq. 1)
+             floatingCalvingThickness = calvingThickness
+         elsewhere
+             groundedCalvingThickness = 0.0_RKIND
+             floatingCalvingThickness = 0.0_RKIND
+         end where
 
          block => block % next
       end do
