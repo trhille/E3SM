@@ -372,9 +372,9 @@ contains
             ! mass loss due to calving (kg yr^{-1})
             blockSumFaceMeltingFlux = blockSumFaceMeltingFlux + faceMeltingThickness(iCell) * &
                areaCell(iCell) * rhoi / ( deltat / scyr )
-            blockSumGroundedFaceMeltingFlux = blockSumFaceMeltingFlux + groundedFaceMeltingThickness(iCell) * &
+            blockSumGroundedFaceMeltingFlux = blockSumGroundedFaceMeltingFlux + groundedFaceMeltingThickness(iCell) * &
                areaCell(iCell) * rhoi / ( deltat / scyr )
-            blockSumFloatingFaceMeltingFlux = blockSumFaceMeltingFlux + floatingFaceMeltingThickness(iCell) * &
+            blockSumFloatingFaceMeltingFlux = blockSumFloatingFaceMeltingFlux + floatingFaceMeltingThickness(iCell) * &
                areaCell(iCell) * rhoi / ( deltat / scyr )
 
             ! max surface speed
