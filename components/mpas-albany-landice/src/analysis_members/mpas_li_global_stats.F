@@ -172,15 +172,23 @@ contains
       real (kind=RKIND), dimension(:), pointer ::  bedTopography
       real (kind=RKIND), dimension(:), pointer ::  sfcMassBalApplied
       real (kind=RKIND), dimension(:), pointer ::  groundedSfcMassBalApplied
+      real (kind=RKIND), dimension(:), pointer ::  floatingSfcMassBalApplied
       real (kind=RKIND), dimension(:), pointer ::  basalMassBalApplied
       real (kind=RKIND), dimension(:), pointer ::  groundedBasalMassBalApplied
       real (kind=RKIND), dimension(:), pointer ::  floatingBasalMassBalApplied
       real (kind=RKIND), dimension(:), pointer ::  calvingThickness
+      real (kind=RKIND), dimension(:), pointer ::  groundedCalvingThickness
+      real (kind=RKIND), dimension(:), pointer ::  floatingCalvingThickness
+      real (kind=RKIND), dimension(:), pointer ::  faceMeltingThickness, &
+                                                   groundedFaceMeltingThickness, &
+                                                   floatingFaceMeltingThickness
       real (kind=RKIND), dimension(:), pointer ::  surfaceSpeed
       real (kind=RKIND), dimension(:), pointer ::  basalSpeed
       real (kind=RKIND), dimension(:), pointer ::  fluxAcrossGroundingLine
       real (kind=RKIND), dimension(:), pointer ::  groundedToFloatingThickness
-      integer, dimension(:), pointer :: cellMask
+      integer, dimension(:), pointer :: cellMask, &
+                                        groundedMaskForMassBudget, &
+                                        floatingMaskForMassBudget
       integer, pointer :: nCellsSolve
       integer, pointer :: nEdgesSolve
 
@@ -201,6 +209,10 @@ contains
       real (kind=RKIND), pointer ::  totalSfcMassBal, totalBasalMassBal
       real (kind=RKIND), pointer ::  totalGroundedSfcMassBal, totalFloatingSfcMassBal
       real (kind=RKIND), pointer ::  totalGroundedBasalMassBal, totalFloatingBasalMassBal
+      real (kind=RKIND), pointer ::  totalGroundedCalvingFlux, totalFloatingCalvingFlux
+      real (kind=RKIND), pointer ::  totalFaceMeltingFlux, &
+                                     totalGroundedFaceMeltingFlux, &
+                                     totalFloatingFaceMeltingFlux
       real (kind=RKIND), pointer ::  avgNetAccumulation
       real (kind=RKIND), pointer ::  avgGroundedBasalMelt
       real (kind=RKIND), pointer ::  avgSubshelfMelt
@@ -219,7 +231,9 @@ contains
       real (kind=RKIND) ::  blockSumSfcMassBal, blockSumBasalMassBal
       real (kind=RKIND) ::  blockSumGroundedSfcMassBal, blockSumFloatingSfcMassBal
       real (kind=RKIND) ::  blockSumGroundedBasalMassBal, blockSumFloatingBasalMassBal
-      real (kind=RKIND) ::  blockSumCalvingFlux
+      real (kind=RKIND) ::  blockSumCalvingFlux, blockSumGroundedCalvingFlux, blockSumFloatingCalvingFlux
+      real (kind=RKIND) ::  blockSumFaceMeltingFlux, blockSumGroundedFaceMeltingFlux, &
+                            blockSumFloatingFaceMeltingFlux
       real (kind=RKIND) ::  blockMaxSurfaceSpeed
       real (kind=RKIND) ::  blockMaxBasalSpeed
       real (kind=RKIND) ::  blockGLflux
@@ -251,6 +265,11 @@ contains
       blockSumGroundedBasalMassBal = 0.0_RKIND
       blockSumFloatingBasalMassBal = 0.0_RKIND
       blockSumCalvingFlux = 0.0_RKIND
+      blockSumGroundedCalvingFlux = 0.0_RKIND
+      blockSumFloatingCalvingFlux = 0.0_RKIND
+      blockSumFaceMeltingFlux = 0.0_RKIND
+      blockSumGroundedFaceMeltingFlux = 0.0_RKIND
+      blockSumFloatingFaceMeltingFlux = 0.0_RKIND
       blockGLflux = 0.0_RKIND
       blockGLMigrationFlux = 0.0_RKIND
 
@@ -286,11 +305,19 @@ contains
          call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
          call mpas_pool_get_array(geometryPool, 'sfcMassBalApplied', sfcMassBalApplied)
          call mpas_pool_get_array(geometryPool, 'groundedSfcMassBalApplied', groundedSfcMassBalApplied)
+         call mpas_pool_get_array(geometryPool, 'floatingSfcMassBalApplied', floatingSfcMassBalApplied)
          call mpas_pool_get_array(geometryPool, 'basalMassBalApplied', basalMassBalApplied)
          call mpas_pool_get_array(geometryPool, 'groundedBasalMassBalApplied', groundedBasalMassBalApplied)
          call mpas_pool_get_array(geometryPool, 'floatingBasalMassBalApplied', floatingBasalMassBalApplied)
          call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
+         call mpas_pool_get_array(geometryPool, 'faceMeltingThickness', faceMeltingThickness)
+         call mpas_pool_get_array(geometryPool, 'groundedCalvingThickness', groundedCalvingThickness)
+         call mpas_pool_get_array(geometryPool, 'floatingCalvingThickness', floatingCalvingThickness)
+         call mpas_pool_get_array(geometryPool, 'groundedFaceMeltingThickness', groundedFaceMeltingThickness)
+         call mpas_pool_get_array(geometryPool, 'floatingFaceMeltingThickness', floatingFaceMeltingThickness)
          call mpas_pool_get_array(geometryPool, 'groundedToFloatingThickness', groundedToFloatingThickness)
+         call mpas_pool_get_array(geometryPool, 'groundedMaskForMassBudget', groundedMaskForMassBudget)
+         call mpas_pool_get_array(geometryPool, 'floatingMaskForMassBudget', floatingMaskForMassBudget)
          call mpas_pool_get_array(velocityPool, 'surfaceSpeed', surfaceSpeed)
          call mpas_pool_get_array(velocityPool, 'basalSpeed', basalSpeed)
          call mpas_pool_get_array(velocityPool, 'fluxAcrossGroundingLine', fluxAcrossGroundingLine)
@@ -303,18 +330,18 @@ contains
                 * areaCell(iCell)
             blockSumIceVolume = blockSumIceVolume + real(li_mask_is_ice_int(cellMask(iCell)),RKIND) &
                 * areaCell(iCell) * thickness(iCell)
-
+            ! can we somehow incorporate non-dynamic floating fringe into VAF?
             blockSumVAF = blockSumVAF + real(li_mask_is_grounded_ice_int(cellMask(iCell)),RKIND) * areaCell(iCell) * &
                 ( thickness(iCell) + (rhow / rhoi) * min(0.0_RKIND, (bedTopography(iCell) - config_sea_level)) )
 
-            blockSumGroundedIceArea = blockSumGroundedIceArea + real(li_mask_is_grounded_ice_int(cellMask(iCell)),RKIND) &
+            blockSumGroundedIceArea = blockSumGroundedIceArea + real(groundedMaskForMassBudget(iCell),RKIND) &
                  * areaCell(iCell)
-            blockSumGroundedIceVolume = blockSumGroundedIceVolume + real(li_mask_is_grounded_ice_int(cellMask(iCell)),RKIND) &
+            blockSumGroundedIceVolume = blockSumGroundedIceVolume + real(groundedMaskForMassBudget(iCell),RKIND) &
                 * areaCell(iCell) * thickness(iCell)
 
-            blockSumFloatingIceArea = blockSumFloatingIceArea + real(li_mask_is_floating_ice_int(cellMask(iCell)),RKIND) &
+            blockSumFloatingIceArea = blockSumFloatingIceArea + real(floatingMaskForMassBudget(iCell),RKIND) &
                 * areaCell(iCell)
-            blockSumFloatingIceVolume = blockSumFloatingIceVolume + real(li_mask_is_floating_ice_int(cellMask(iCell)),RKIND) &
+            blockSumFloatingIceVolume = blockSumFloatingIceVolume + real(floatingMaskForMassBudget(iCell),RKIND) &
                 * areaCell(iCell) * thickness(iCell)
 
             ! max, min thickness values (m)
@@ -328,15 +355,26 @@ contains
             ! SMB (kg yr^{-1})
             blockSumSfcMassBal = blockSumSfcMassBal + areaCell(iCell) * sfcMassBalApplied(iCell) * scyr
             blockSumGroundedSfcMassBal = blockSumGroundedSfcMassBal + areaCell(iCell) * groundedSfcMassBalApplied(iCell) * scyr
-            blockSumFloatingSfcMassBal = blockSumFloatingSfcMassBal + &
-               (sfcMassBalApplied(iCell) - groundedSfcMassBalApplied(iCell)) * areaCell(iCell) * scyr
+            blockSumFloatingSfcMassBal = blockSumFloatingSfcMassBal + areaCell(iCell) * floatingSfcMassBalApplied(iCell) * scyr 
             ! BMB (kg yr-1)
             blockSumBasalMassBal = blockSumBasalMassBal + areaCell(iCell) * basalMassBalApplied(iCell) * scyr
             blockSumGroundedBasalMassBal = blockSumGroundedBasalMassBal + areaCell(iCell) * groundedBasalMassBalApplied(iCell) * scyr
             blockSumFloatingBasalMassBal = blockSumFloatingBasalMassBal + areaCell(iCell) * floatingBasalMassBalApplied(iCell) * scyr
 
-            ! mass lass due do calving (kg yr^{-1})
+            ! mass loss due to calving (kg yr^{-1})
             blockSumCalvingFlux = blockSumCalvingFlux + calvingThickness(iCell) * &
+               areaCell(iCell) * rhoi / ( deltat / scyr )
+            blockSumGroundedCalvingFlux = blockSumGroundedCalvingFlux + groundedCalvingThickness(iCell) * &
+               areaCell(iCell) * rhoi / ( deltat / scyr )
+            blockSumFloatingCalvingFlux = blockSumFloatingCalvingFlux + floatingCalvingThickness(iCell) * &
+               areaCell(iCell) * rhoi / ( deltat / scyr )
+
+            ! mass loss due to calving (kg yr^{-1})
+            blockSumFaceMeltingFlux = blockSumFaceMeltingFlux + faceMeltingThickness(iCell) * &
+               areaCell(iCell) * rhoi / ( deltat / scyr )
+            blockSumGroundedFaceMeltingFlux = blockSumFaceMeltingFlux + groundedFaceMeltingThickness(iCell) * &
+               areaCell(iCell) * rhoi / ( deltat / scyr )
+            blockSumFloatingFaceMeltingFlux = blockSumFaceMeltingFlux + floatingFaceMeltingThickness(iCell) * &
                areaCell(iCell) * rhoi / ( deltat / scyr )
 
             ! max surface speed
@@ -405,10 +443,15 @@ contains
       sums(11) = blockSumGroundedBasalMassBal
       sums(12) = blockSumFloatingBasalMassBal
       sums(13) = blockSumCalvingFlux
-      sums(14) = blockSumVAF
-      sums(15) = blockGLflux
-      sums(16) = blockGLMigrationflux
-      nVars = 16
+      sums(14) = blockSumGroundedCalvingFlux
+      sums(15) = blockSumFloatingCalvingFlux
+      sums(16) = blockSumFaceMeltingFlux
+      sums(17) = blockSumGroundedFaceMeltingFlux
+      sums(18) = blockSumFloatingFaceMeltingFlux
+      sums(19) = blockSumVAF
+      sums(20) = blockGLflux
+      sums(21) = blockGLMigrationflux
+      nVars = 21
 
       call mpas_dmpar_sum_real_array(dminfo, nVars, sums(1:nVars), reductions(1:nVars))
 
@@ -434,6 +477,11 @@ contains
          call mpas_pool_get_array(globalStatsAMPool, 'totalFloatingBasalMassBal', totalFloatingBasalMassBal)
          call mpas_pool_get_array(globalStatsAMPool, 'avgSubshelfMelt', avgSubshelfMelt)
          call mpas_pool_get_array(globalStatsAMPool, 'totalCalvingFlux', totalCalvingFlux)
+         call mpas_pool_get_array(globalStatsAMPool, 'totalGroundedCalvingFlux', totalGroundedCalvingFlux)
+         call mpas_pool_get_array(globalStatsAMPool, 'totalFloatingCalvingFlux', totalFloatingCalvingFlux)
+         call mpas_pool_get_array(globalStatsAMPool, 'totalFaceMeltingFlux', totalFaceMeltingFlux)
+         call mpas_pool_get_array(globalStatsAMPool, 'totalGroundedFaceMeltingFlux', totalGroundedFaceMeltingFlux)
+         call mpas_pool_get_array(globalStatsAMPool, 'totalFloatingFaceMeltingFlux', totalFloatingFaceMeltingFlux)
          call mpas_pool_get_array(globalStatsAMPool, 'groundingLineFlux', groundingLineFlux)
          call mpas_pool_get_array(globalStatsAMPool, 'groundingLineMigrationFlux', groundingLineMigrationFlux)
 
@@ -450,9 +498,14 @@ contains
          totalGroundedBasalMassBal = reductions(11)
          totalFloatingBasalMassBal = reductions(12)
          totalCalvingFlux = reductions(13)
-         volumeAboveFloatation = reductions(14)
-         groundingLineFlux = reductions(15)
-         groundingLineMigrationFlux = reductions(16)
+         totalGroundedCalvingFlux = reductions(14)
+         totalFloatingCalvingFlux = reductions(15)
+         totalFaceMeltingFlux = reductions(16)
+         totalGroundedFaceMeltingFlux = reductions(17)
+         totalFloatingFaceMeltingFlux = reductions(18)
+         volumeAboveFloatation = reductions(19)
+         groundingLineFlux = reductions(20)
+         groundingLineMigrationFlux = reductions(21)
 
          if (totalIceArea > 0.0_RKIND) then
             iceThicknessMean = totalIceVolume / totalIceArea
