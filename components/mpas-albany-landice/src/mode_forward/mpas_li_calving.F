@@ -333,6 +333,29 @@ module li_calving
 
       call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
 
+      ! Parse grounded vs floating calving for budgets
+      block => domain % blocklist
+      do while (associated(block))
+         call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
+         call mpas_pool_get_array(geometryPool, 'groundedCalvingThickness', groundedCalvingThickness)
+         call mpas_pool_get_array(geometryPool, 'floatingCalvingThickness', floatingCalvingThickness)
+         call mpas_pool_get_array(geometryPool, 'groundedMaskForMassBudget', groundedMaskForMassBudget)
+         call mpas_pool_get_array(geometryPool, 'floatingMaskForMassBudget', floatingMaskForMassBudget)
+
+         groundedCalvingThickness(:) = 0.0_RKIND
+         floatingCalvingThickness(:) = 0.0_RKIND
+         where (groundedMaskForMassBudget .eq. 1)
+             groundedCalvingThickness = calvingThickness
+         elsewhere (floatingMaskForMassBudget .eq. 1)
+             floatingCalvingThickness = calvingThickness
+         elsewhere
+             groundedCalvingThickness = 0.0_RKIND
+             floatingCalvingThickness = 0.0_RKIND
+         end where
+
+         block => block % next
+      end do
+
       ! Final operations after calving has been applied, including removal
       ! of small islands
       block => domain % blocklist
@@ -373,20 +396,6 @@ module li_calving
          call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
          err = ior(err, err_tmp)
          call li_update_geometry(geometryPool)
-         ! necessary to get these after masks have been updated
-         call mpas_pool_get_array(geometryPool, 'groundedMaskForMassBudget', groundedMaskForMassBudget)
-         call mpas_pool_get_array(geometryPool, 'floatingMaskForMassBudget', floatingMaskForMassBudget)
-
-         groundedCalvingThickness(:) = 0.0_RKIND
-         floatingCalvingThickness(:) = 0.0_RKIND
-         where (groundedMaskForMassBudget .eq. 1)
-             groundedCalvingThickness = calvingThickness
-         elsewhere (floatingMaskForMassBudget .eq. 1)
-             floatingCalvingThickness = calvingThickness
-         elsewhere
-             groundedCalvingThickness = 0.0_RKIND
-             floatingCalvingThickness = 0.0_RKIND
-         end where
 
          block => block % next
       end do
