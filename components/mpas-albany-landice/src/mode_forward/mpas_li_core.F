@@ -803,7 +803,7 @@ module li_core
          call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
          call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
 
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          call li_update_geometry(geometryPool)
 
          block => block % next

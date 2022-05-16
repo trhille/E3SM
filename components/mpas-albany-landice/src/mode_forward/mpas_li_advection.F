@@ -82,6 +82,7 @@ module li_advection
         geometryPool,           &
         thermalPool,            &
         scratchPool,            &
+        domain,                 &
         err,                    &
         advectTracersIn)
 
@@ -111,10 +112,11 @@ module li_advection
       !-----------------------------------------------------------------
       type (domain_type), intent(inout) :: domain  !< Input/Output: domain object
 
+      type (domain_type), intent(inout) :: domain
+
       type (mpas_pool_type), intent(inout) :: &
            velocityPool           !< Input/output: velocity information
                                   !                (needs to be inout for li_calculate_mask call
-
       type (mpas_pool_type), intent(inout) :: &
            geometryPool           !< Input/output: geometry information to be updated
 
@@ -376,10 +378,6 @@ module li_advection
       ! given the old thickness, compute the thickness in each layer
       call li_calculate_layerThickness(meshPool, thickness, layerThickness)
 
-      ! Save copies of masks because we need to preserve mask
-      ! states prior to advection for accurate time integration.
-      ! A mask update is necessary to calculate grounding line flux,
-      ! after which we will reset the masks to their previous states.
       cellMaskTemporaryField % array(:) = cellMask(:)
       edgeMaskTemporaryField % array(:) = edgeMask(:)
       vertexMaskTemporaryField % array(:) = vertexMask(:)
@@ -642,7 +640,7 @@ module li_advection
          ! We need an updated set of masks to calculate fluxAcrossGroundingLine,
          ! but we will reset this to the previous state below for accuracy of the
          ! time integration scheme.
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
 
          ! Calculate flux across grounding line
