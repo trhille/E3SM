@@ -1224,6 +1224,9 @@ is the value of that variable from the *previous* time level!
                 <var name="groundedSfcMassBalApplied" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
                      description="applied surface mass balance on grounded ice"
                 />
+                <var name="floatingSfcMassBalApplied" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
+                     description="applied surface mass balance on floating ice"
+                />
                 <var name="basalMassBal" type="real" dimensions="nCells Time" units="kg m^{-2} s^{-1}"
                      description="Potential basal mass balance"
                 />

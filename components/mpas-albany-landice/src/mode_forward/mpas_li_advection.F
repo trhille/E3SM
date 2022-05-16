@@ -149,6 +149,7 @@ module li_advection
            sfcMassBal,            & ! surface mass balance (potential forcing)
            sfcMassBalApplied,     & ! surface mass balance (actually applied)
            groundedSfcMassBalApplied,     & ! surface mass balance on grounded locations (actually applied)
+           floatingSfcMassBalApplied,     & ! surface mass balance on floating locations (actually applied)
            basalMassBal,          & ! basal mass balance
            groundedBasalMassBal,  & ! basal mass balance for grounded ice
            floatingBasalMassBal,  & ! basal mass balance for floating ice
@@ -203,7 +204,9 @@ module li_advection
       integer, dimension(:), pointer :: &
            cellMask,              & ! integer bitmask for cells
            edgeMask,              & ! integer bitmask for edges
-           thermalCellMask
+           thermalCellMask,       &
+           groundedMaskForMassBudget, &
+           floatingMaskForMassBudget
 
       integer, dimension(:,:), pointer :: cellsOnEdge
 
@@ -282,6 +285,7 @@ module li_advection
       call mpas_pool_get_array(geometryPool, 'sfcMassBal', sfcMassBal)
       call mpas_pool_get_array(geometryPool, 'sfcMassBalApplied', sfcMassBalApplied)
       call mpas_pool_get_array(geometryPool, 'groundedSfcMassBalApplied', groundedSfcMassBalApplied)
+      call mpas_pool_get_array(geometryPool, 'floatingSfcMassBalApplied', floatingSfcMassBalApplied)
       call mpas_pool_get_array(geometryPool, 'basalMassBal', basalMassBal)
       call mpas_pool_get_array(geometryPool, 'groundedBasalMassBal', groundedBasalMassBal)
       call mpas_pool_get_array(geometryPool, 'floatingBasalMassBal', floatingBasalMassBal)
@@ -294,7 +298,8 @@ module li_advection
       call mpas_pool_get_array(geometryPool, 'edgeMask', edgeMask)
       call mpas_pool_get_array(geometryPool, 'dynamicThickening', dynamicThickening)
       call mpas_pool_get_array(geometryPool, 'groundedToFloatingThickness', groundedToFloatingThickness)
-
+      call mpas_pool_get_array(geometryPool, 'groundedMaskForMassBudget', groundedMaskForMassBudget)
+      call mpas_pool_get_array(geometryPool, 'floatingMaskForMassBudget', floatingMaskForMassBudget)
       ! get arrays from the velocity pool
       call mpas_pool_get_array(velocityPool, 'layerNormalVelocity', layerNormalVelocity)
       call mpas_pool_get_array(velocityPool, 'layerThicknessEdgeFlux', layerThicknessEdgeFlux)
@@ -597,10 +602,13 @@ module li_advection
               sfcMassBal,          &
               sfcMassBalApplied,   &
               groundedSfcMassBalApplied,   &
+              floatingSfcMassBalApplied,   &
               basalMassBal,        &
               basalMassBalApplied, &
               groundedBasalMassBalApplied, &
               floatingBasalMassBalApplied, &
+              groundedMaskForMassBudget, &
+              floatingMaskForMassBudget, &
               surfaceTracers,      &
               basalTracers,        &
               layerThickness,      &
@@ -846,10 +854,13 @@ module li_advection
               sfcMassBal,          &
               sfcMassBalApplied,   &
               groundedSfcMassBalApplied,   &
+              floatingSfcMassBalApplied,   &
               basalMassBal,        &
               basalMassBalApplied, &
               groundedBasalMassBalApplied, &
               floatingBasalMassBalApplied, &
+              groundedMaskForMassBudget, &
+              floatingMaskForMassBudget, &
               surfaceTracers,      &
               basalTracers,        &
               layerThickness,      &
@@ -863,7 +874,9 @@ module li_advection
            dt,                 & !< Input: time step (s)
            rhoi                  !< Input: ice density (kg/m^3)
 
-      integer, dimension(:), intent(in) :: cellMask !< Input: mask on cells
+      integer, dimension(:), intent(in) :: cellMask, & !< Input: mask on cells
+                                           groundedMaskForMassBudget, &
+                                           floatingMaskForMassBudget
 
       real (kind=RKIND), dimension(:), intent(in) ::  &
            bedTopography,      & !< Input: bed elevation (m)
@@ -892,7 +905,8 @@ module li_advection
            sfcMassBalApplied !< Output: surface mass balance actually applied on this time step (kg/m^2/s)
 
       real(kind=RKIND), dimension(:), intent(out) :: &
-           groundedSfcMassBalApplied !< Output: surface mass balance actually applied to grounded ice on this time step (kg/m^2/s)
+           groundedSfcMassBalApplied, &  !< Output: surface mass balance actually applied to grounded ice on this time step (kg/m^2/s)
+           floatingSfcMassBalApplied     !< Output: surface mass balance actually applied to floating ice on this time step (kg/m^2/s)
 
       real(kind=RKIND), dimension(:), intent(out) :: &
            basalMassBalApplied,         & !< Output: basal mass balance actually applied on this time step (kg/m^2/s)
@@ -1048,10 +1062,15 @@ module li_advection
       enddo   ! iCell
 
       ! Separate grounded and floating components, as necessary.
-      where (li_mask_is_grounded_ice(cellMask) .or. bedTopography > config_sea_level)
+      where ( (groundedMaskForMassBudget .eq. 1) .or. (bedTopography > config_sea_level) )
             groundedSfcMassBalApplied = sfcMassBalApplied
+            floatingSfcMassBalApplied = 0.0_RKIND
+      elsewhere (floatingMaskForMassBudget .eq. 1)
+            groundedSfcMassBalApplied = 0.0_RKIND
+            floatingSfcMassBalApplied = sfcMassBalApplied
       elsewhere
             groundedSfcMassBalApplied = 0.0_RKIND
+            floatingSfcMassBalApplied = 0.0_RKIND
       end where
 
       do iCell = 1, nCells
