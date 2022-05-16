@@ -1357,6 +1357,12 @@ is the value of that variable from the *previous* time level!
 		<var name="faceMeltingThickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
                      description="Equivalent plan-view averaged thickness of ice that melts on a given timestep from front ablation (less than or equal to ice thickness)"
 		/>
+                <var name="groundedFaceMeltingThickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
+                     description="Equivalent plan-view averaged thickness of grounded ice that melts on a given timestep from front ablation (less than or equal to ice thickness). Used in mass budget calculations."
+                />
+                <var name="floatingFaceMeltingThickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
+                     description="Equivalent plan-view averaged thickness of floating ice that melts on a given timestep from front ablation (less than or equal to ice thickness). Used in mass budget calculations."
+                />
                <var name="unmeltedVolume" type="real" dimensions="nCells Time" units="m^3" time_levs="1"
                      description="volume of ice that was left unmelted from required facemelt flux due to only applying flux over immediate neighbors (diagnostic field to assess if this limitation is a problem)"
 	        />
