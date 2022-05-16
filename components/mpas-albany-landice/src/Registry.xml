@@ -1204,6 +1204,12 @@ is the value of that variable from the *previous* time level!
                 <var name="calvingThickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
                         description="thickness of ice that calves on a given timestep (less than or equal to ice thickness)"
                 />
+                <var name="groundedCalvingThickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
+                        description="thickness of grounded ice that calves on a given timestep (less than or equal to ice thickness)"
+                />
+                <var name="floatingCalvingThickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
+                        description="thickness of floating ice that calves on a given timestep (less than or equal to ice thickness)"
+                />
                 <var name="calvingCFLdt" type="real" dimensions="Time" units="s" time_levs="1" default_value="1.0e16"
                         description="approximation of maximum allowable timestep based on calvingVelocity"
                 />
