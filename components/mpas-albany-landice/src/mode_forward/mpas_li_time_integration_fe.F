@@ -715,6 +715,7 @@ module li_time_integration_fe
                  geometryPool,           &
                  thermalPool,            &
                  scratchPool,            &
+                 domain,                 &
                  err_tmp,                &
                  advectTracersIn = .true.)
 
@@ -733,6 +734,7 @@ module li_time_integration_fe
                  geometryPool,           &
                  thermalPool,            &
                  scratchPool,            &
+                 domain,                 &
                  err_tmp,                &
                  advectTracersIn = .false.)
 
@@ -809,7 +811,7 @@ module li_time_integration_fe
             thickness(:) = thicknessOld(:)
          endif
 
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          call li_update_geometry(geometryPool)
 
          block => block % next

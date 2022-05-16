@@ -45,7 +45,7 @@ module li_calving
    !--------------------------------------------------------------------
 
    public :: li_calve_ice, li_restore_calving_front, li_apply_front_ablation_velocity, &
-             li_calculate_damage, li_finalize_damage_after_advection
+             li_calculate_damage, li_finalize_damage_after_advection, li_flood_fill
 
    !--------------------------------------------------------------------
    !
@@ -160,7 +160,7 @@ module li_calving
       ! Update mask and geometry before calling any calving routines.  May not be necessary, but best be safe.
       call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
       call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
-      call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+      call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
       err = ior(err, err_tmp)
       call li_update_geometry(geometryPool)
 
@@ -318,7 +318,7 @@ module li_calving
 
          ! Update mask and geometry
          call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
          call li_update_geometry(geometryPool)
 
@@ -506,7 +506,7 @@ module li_calving
          restoreThicknessMin = 0.1_RKIND * config_dynamic_thickness
 
          ! calculate masks - so we know where the calving front was located initially
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
 
          ! initialize
@@ -575,7 +575,7 @@ module li_calving
          call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
          call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
 
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          call li_update_geometry(geometryPool)
 
          block => block % next
@@ -1293,7 +1293,7 @@ module li_calving
          thickness(:) = thickness(:) - calvingThickness(:)
 
          ! update mask
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
 
          ! Now also remove thin floating, dynamic ice (based on chosen thickness threshold) after mask is updated.
@@ -1317,7 +1317,7 @@ module li_calving
          ! TODO: global reduce & reporting on amount of calving generated in this step
 
          ! update mask
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
 
          ! remove abandoned floating ice (i.e. icebergs) and add it to the calving flux
@@ -1477,7 +1477,7 @@ module li_calving
          thickness(:) = thickness(:) - calvingThickness(:)
 
          ! update mask
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
 
          ! Now also remove thin floating, dynamic ice (based on chosen thickness threshold) after mask is updated.
@@ -1501,7 +1501,7 @@ module li_calving
          ! TODO: global reduce & reporting on amount of calving generated in this step
 
          ! update mask
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
 
          ! remove abandoned floating ice (i.e. icebergs) and add it to the calving flux
@@ -1808,7 +1808,7 @@ module li_calving
           thickness(:) = thickness(:) - calvingThickness(:)
 
           ! update mask
-          call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+          call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
           err = ior(err, err_tmp)
 
           call remove_small_islands(meshPool, geometryPool)
@@ -2080,7 +2080,7 @@ module li_calving
       thickness(:) = thickness(:) - calvingThickness(:)
 
       ! update mask
-      call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+      call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
       err = ior(err, err_tmp)
       call remove_small_islands(meshPool, geometryPool)
 
@@ -3010,7 +3010,7 @@ module li_calving
          thickness(:) = thickness(:) - calvingThickness(:)
 
          ! update mask
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
 
          ! Now also remove thin floating, dynamic ice (based on chosen thickness threshold) after mask is updated.
@@ -3026,7 +3026,7 @@ module li_calving
          enddo
 
          ! update mask
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
 
          ! remove abandoned floating ice (i.e. icebergs) and add it to the calving flux
@@ -3420,7 +3420,7 @@ module li_calving
          call mpas_pool_get_array(velocityPool, 'stiffnessFactor', stiffnessFactor)
 
          ! make sure masks are up to date.  May not be necessary, but safer to do anyway.
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
 
          if (config_preserve_damage) then
@@ -3591,7 +3591,7 @@ module li_calving
               growMask = 1
       end where
 
-      call flood_fill(seedMask, growMask, domain)
+      call li_flood_fill(seedMask, growMask, domain)
 
       ! Remove ice from flood-filled mask, and any neighboring non-dynamic ice
       do iCell = 1, nCells
@@ -3684,7 +3684,7 @@ module li_calving
          end where
 
          ! update mask
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
 
          call remove_small_islands(meshPool, geometryPool)
@@ -3856,7 +3856,7 @@ module li_calving
 
          ! make sure masks are up to date.  May not be necessary, but safer to
          ! do anyway.
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
 
          call mpas_log_write("Iceberg-detection flood-fill: updated masks.")
@@ -3934,7 +3934,7 @@ module li_calving
 
 !|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
 !
-!    routine flood_fill
+!    routine li_flood_fill
 !
 !> \brief  Flood fill routine to differentiate ice sheet from icebergs, critically damaged regions, etc. 
 !> The calling routine defines the seedMask to specify the initial masked region, and the growMask 
@@ -3946,7 +3946,7 @@ module li_calving
 !> \date   March 2021
 !> \details 
 !-----------------------------------------------------------------------
-   subroutine flood_fill(seedMask, growMask, domain)
+   subroutine li_flood_fill(seedMask, growMask, domain)
       !-----------------------------------------------------------------
       ! input/output variables
       !-----------------------------------------------------------------
@@ -3994,7 +3994,7 @@ module li_calving
 
          ! make sure masks are up to date.  May not be necessary, but safer to
          ! do anyway.
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
 
          !call mpas_log_write("Flood-fill: updated masks.")
@@ -4082,7 +4082,7 @@ module li_calving
 
       call mpas_log_write("Flood fill complete.")
 
-   end subroutine flood_fill
+   end subroutine li_flood_fill
 
 end module li_calving
 
