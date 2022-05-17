@@ -196,7 +196,9 @@ module li_advection
 
       type (field1DInteger), pointer :: &
            cellMaskTemporaryField, & ! scratch field containing old values of cellMask
-           thermalCellMaskField
+           thermalCellMaskField,   &
+           groundedMaskForMassBudgetTemporaryField, & ! scratch field containing old values of groundedMaskForMassBudget
+           floatingMaskForMassBudgetTemporaryField    ! scratch field containing old values of floatingMaskForMassBudget
 
       ! Allocatable arrays need for flux-corrected transport advection
       real (kind=RKIND), dimension(:,:,:), allocatable :: tend
@@ -360,8 +362,10 @@ module li_advection
       call mpas_allocate_scratch_field(basalTracersField, .true.)
       basalTracers => basalTracersField % array
 
-      call mpas_pool_get_field(geometryPool, 'cellMaskTemporary', cellMaskTemporaryField)
-      call mpas_allocate_scratch_field(cellMaskTemporaryField, .true.)
+      call mpas_pool_get_field(geometryPool, 'groundedMaskForMassBudgetTemporary', groundedMaskForMassBudgetTemporaryField)
+      call mpas_pool_get_field(geometryPool, 'floatingMaskForMassBudgetTemporary', floatingMaskForMassBudgetTemporaryField)
+      call mpas_allocate_scratch_field(groundedMaskForMassBudgetTemporaryField, .true.)
+      call mpas_allocate_scratch_field(floatingMaskForMassBudgetTemporaryField, .true.)
 
       call mpas_pool_get_field(scratchPool, 'iceCellMask', thermalCellMaskField)
       call mpas_allocate_scratch_field(thermalCellMaskField, .true.)
@@ -377,9 +381,10 @@ module li_advection
       call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
       err = ior(err, err_tmp)
 
-      ! save old copycellMask for determining cells changing from grounded to floating and vice versa
-      cellMaskTemporaryField % array(:) = cellMask(:)
       layerThicknessEdgeFlux(:,:) = 0.0_RKIND
+      ! save old mass budget masks for determining cells changing from grounded to floating and vice versa
+      groundedMaskForMassBudgetTemporaryField % array(:) = groundedMaskForMassBudget(:)
+      floatingMaskForMassBudgetTemporaryField % array(:) = floatingMaskForMassBudget(:)
 
       !-----------------------------------------------------------------
       ! Horizontal transport of thickness and tracers
@@ -640,6 +645,16 @@ module li_advection
          call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
 
+         ! Calculate volume converted from grounded to floating
+         ! This needs to be determined after SMB/BMB are applied because those can change floating/grounded state
+         call grounded_to_floating(groundedMaskForMassBudgetTemporaryField % array, &
+                                   floatingMaskForMassBudgetTemporaryField % array, &
+                                   groundedMaskForMassBudget, &
+                                   floatingMaskForMassBudget, &
+                                   thickness, &
+                                   groundedToFloatingThickness, &
+                                   nCells)
+
          ! Calculate flux across grounding line
          ! Do this after new thickness & mask have been calculated, including SMB/BMB
          fluxAcrossGroundingLine(:) = 0.0_RKIND
@@ -744,6 +759,8 @@ module li_advection
       call mpas_deallocate_scratch_field(surfaceTracersField, .true.)
       call mpas_deallocate_scratch_field(cellMaskTemporaryField, .true.)
       call mpas_deallocate_scratch_field(thermalCellMaskField, .true.)
+      call mpas_deallocate_scratch_field(groundedMaskForMassBudgetTemporaryField, .true.)
+      call mpas_deallocate_scratch_field(floatingMaskForMassBudgetTemporaryField, .true.)
 
       ! === error check
       if (err > 0) then
@@ -2125,16 +2142,23 @@ module li_advection
 
     end subroutine vertical_remap
 
-    subroutine li_grounded_to_floating(cellMaskOrig, cellMaskNew, thicknessNew, groundedToFloatingThickness, nCells)
+    subroutine grounded_to_floating(groundedMaskForMassBudgetOrig, &
+                                    floatingMaskForMassBudgetOrig, &
+                                    groundedMaskForMassBudgetNew, &
+                                    floatingMaskForMassBudgetNew, &
+                                    thicknessNew, &
+                                    groundedToFloatingThickness, &
+                                    nCells)
       !-----------------------------------------------------------------
       ! input variables
       !-----------------------------------------------------------------
       integer, dimension(:), intent(in) :: &
-         cellMaskOrig          !< Input: mask for cells before advection
+         groundedMaskForMassBudgetOrig, &          !< Input: mask for cells before advection
+         floatingMaskForMassBudgetOrig
 
       integer, dimension(:), intent(in) :: &
-         cellMaskNew          !< Input: mask for cells after advection
-
+         groundedMaskForMassBudgetNew, &          !< Input: mask for cells after advection
+         floatingMaskForMassBudgetNew
       real(kind=RKIND), dimension(:), intent(in) :: &
          thicknessNew         !< Input: ice thickness after advection
 
@@ -2159,12 +2183,12 @@ module li_advection
 
       do iCell = 1, nCells
         ! find locations that had grounded ice before but now have floating ice
-        if (li_mask_is_grounded_ice(cellMaskOrig(iCell)) .and. &
-            li_mask_is_floating_ice(cellMaskNew(iCell)) ) then
+        if ( (groundedMaskForMassBudgetOrig(iCell) .eq. 1) .and. &
+             (floatingMaskForMassBudgetNew(iCell) .eq. 1) ) then
            groundedToFloatingThickness(iCell) = thicknessNew(iCell)
         ! find locations that had floating ice before but now have grounded ice
-        else if (li_mask_is_floating_ice(cellMaskOrig(iCell)) .and. &
-                 li_mask_is_grounded_ice(cellMaskNew(iCell)) ) then
+        else if ( (floatingMaskForMassBudgetOrig(iCell) .eq. 1) .and. &
+                  (groundedMaskForMassBudgetNew(iCell) .eq. 1) ) then
            groundedToFloatingThickness(iCell) = -1.0_RKIND * thicknessNew(iCell)
         endif
       enddo
