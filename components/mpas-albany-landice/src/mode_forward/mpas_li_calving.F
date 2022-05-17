@@ -247,6 +247,24 @@ module li_calving
          end do
       endif
       
+      ! Zero calvingThickness here instead of or in addition to in individual subroutines.
+      ! This is necessary when using damage threshold calving with other calving
+      ! routines. Some individual routines still set calvingThickness to zero, but 
+      ! this is redundant. li_apply_front_ablation_velocity will zero 
+      ! calvingThickness, so any routines that use that should not be applied 
+      ! after other calving routines.
+      block => domain % blocklist
+      do while (associated(block))
+         call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
+         call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
+         call mpas_pool_get_array(geometryPool, 'groundedCalvingThickness', groundedCalvingThickness)
+         call mpas_pool_get_array(geometryPool, 'floatingCalvingThickness', floatingCalvingThickness)
+         calvingThickness(:) = 0.0_RKIND
+         groundedCalvingThickness(:) = 0.0_RKIND
+         floatingCalvingThickness(:) = 0.0_RKIND
+   
+         block => block % next
+      end do
       ! compute calvingThickness based on the calving_config option
       if (trim(config_calving) == 'none') then
 
@@ -366,8 +384,6 @@ module li_calving
          call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
          call mpas_pool_get_array(geometryPool, 'thickness', thickness)
          call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
-         call mpas_pool_get_array(geometryPool, 'groundedCalvingThickness', groundedCalvingThickness)
-         call mpas_pool_get_array(geometryPool, 'floatingCalvingThickness', floatingCalvingThickness)
          call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
 
          ! In data calving mode we just calculate what should be calved but don't actually calve it.
@@ -668,6 +684,7 @@ module li_calving
          block => block % next
       enddo
 
+      call update_calving_budget(domain)
       ! Update mask and geometry
       block => domain % blocklist
       do while (associated(block))
@@ -972,6 +989,12 @@ module li_calving
          ! === apply calving ===
          thickness(:) = thickness(:) - calvingThickness(:)
 
+<<<<<<< HEAD
+=======
+         call update_calving_budget(domain)
+         call remove_small_islands(meshPool, geometryPool)
+
+>>>>>>> d85d0dc7a7 (Account for multiple updates of calvingThickness within a timestep)
          block => block % next
       enddo
 
@@ -1046,6 +1069,12 @@ module li_calving
          ! === apply calving ===
          thickness(:) = thickness(:) - calvingThickness(:)
 
+<<<<<<< HEAD
+=======
+         call update_calving_budget(domain)
+         call remove_small_islands(meshPool, geometryPool)
+
+>>>>>>> d85d0dc7a7 (Account for multiple updates of calvingThickness within a timestep)
          block => block % next
       enddo
 
@@ -1071,11 +1100,20 @@ module li_calving
       integer, intent(inout) :: err
       type (mpas_pool_type), pointer :: scratchPool, meshPool, geometryPool, velocityPool
       logical, pointer :: config_remove_small_islands
+<<<<<<< HEAD
       real (kind=RKIND), dimension(:), pointer :: calvingThickness    ! thickness of ice that calves (computed in this subroutine)
+=======
+      real(kind=RKIND), pointer :: config_sea_level
+>>>>>>> d85d0dc7a7 (Account for multiple updates of calvingThickness within a timestep)
       real (kind=RKIND), dimension(:), pointer :: calvingThicknessFromThreshold    ! thickness of ice that calves (computed in this subroutine)
+      real (kind=RKIND), dimension(:), pointer :: calvingThickness, &   ! thickness of ice that calves (computed in this subroutine)
+                                                  groundedCalvingThickness, &
+                                                  floatingCalvingThickness
       real (kind=RKIND), dimension(:), pointer :: thickness
       real (kind=RKIND), dimension(:), pointer :: bedTopography
-      integer, dimension(:), pointer :: cellMask
+      integer, dimension(:), pointer :: cellMask, &
+                                        groundedMaskForMassBudget, &
+                                        floatingMaskForMassBudget
       integer, dimension(:,:), pointer :: cellsOnCell ! list of cells that neighbor each cell
       integer, dimension(:), pointer :: nEdgesOnCell ! number of cells that border each cell
       integer, pointer :: nCells, maxEdges
@@ -1105,6 +1143,10 @@ module li_calving
       call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
       call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
       call mpas_pool_get_array(geometryPool, 'calvingThicknessFromThreshold', calvingThicknessFromThreshold)
+      call mpas_pool_get_array(geometryPool, 'groundedCalvingThickness', groundedCalvingThickness)
+      call mpas_pool_get_array(geometryPool, 'floatingCalvingThickness', floatingCalvingThickness)
+      call mpas_pool_get_array(geometryPool, 'groundedMaskForMassBudget', groundedMaskForMassBudget)
+      call mpas_pool_get_array(geometryPool, 'floatingMaskForMassBudget', floatingMaskForMassBudget)
       call mpas_pool_get_array(geometryPool, 'thickness', thickness)
       call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
 
@@ -1170,6 +1212,7 @@ module li_calving
                   exit
                endif
             enddo
+<<<<<<< HEAD
          endif
       enddo
 
@@ -1219,6 +1262,30 @@ module li_calving
                        (.not. any(connectedCellsList == kCell)) ) then
                         removeIsland = .false.
                         exit
+=======
+            if ((nIceNeighbors == 0) .and. (nOpenOceanNeighbors == nEdgesOnCell(iCell))) then
+               ! If this is a single cell of ice surrounded by open ocean, kill this location
+               calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
+               calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)
+               thickness(iCell) = 0.0_RKIND
+               ! Update calving budgets
+               if (groundedMaskForMassBudget(iCell) .eq. 1) then
+                  groundedCalvingThickness(iCell) = groundedCalvingThickness(iCell) + thickness(iCell)
+               elseif (floatingMaskForMassBudget(iCell) .eq. 1) then
+                  floatingCalvingThickness(iCell) = floatingCalvingThickness(iCell) + thickness(iCell)
+               endif
+            elseif (nIceNeighbors == 1) then
+               ! check if this neighbor has any additional neighbors with ice
+               nIceNeighbors2 = 0
+               nOpenOceanNeighbors2 = 0
+               do n = 1, nEdgesOnCell(neighborWithIce)
+                  jCell = cellsOnCell(n, neighborWithIce)
+                  if (li_mask_is_ice(cellMask(jCell))) then
+                     nIceNeighbors2 = nIceNeighbors2 + 1
+                  endif
+                  if (.not. li_mask_is_ice(cellMask(jCell)) .and. bedTopography(jCell) < config_sea_level) then
+                     nOpenOceanNeighbors2 = nOpenOceanNeighbors2 + 1
+>>>>>>> d85d0dc7a7 (Account for multiple updates of calvingThickness within a timestep)
                   endif
                enddo
             enddo
@@ -1268,6 +1335,7 @@ module li_calving
                   calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
                   calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)
                   thickness(iCell) = 0.0_RKIND
+<<<<<<< HEAD
             endif
          enddo
          call mpas_log_write("***Finished cleaning up after removing small islands***")
@@ -1276,6 +1344,30 @@ module li_calving
                  islandMask)
       call mpas_deallocate_scratch_field(seedMaskField, single_block_in=.true.)
       call mpas_deallocate_scratch_field(growMaskField, single_block_in=.true.)
+=======
+                  ! Update calving budgets
+                  if (groundedMaskForMassBudget(iCell) .eq. 1) then
+                     groundedCalvingThickness(iCell) = groundedCalvingThickness(iCell) + thickness(iCell)
+                  elseif (floatingMaskForMassBudget(iCell) .eq. 1) then
+                     floatingCalvingThickness(iCell) = floatingCalvingThickness(iCell) + thickness(iCell)
+                  endif
+
+                  calvingThickness(neighborWithIce) = calvingThickness(neighborWithIce) + thickness(neighborWithIce)
+                  calvingThicknessFromThreshold(neighborWithIce) = calvingThicknessFromThreshold(neighborWithIce) + thickness(neighborWithIce)
+                  thickness(neighborWithIce) = 0.0_RKIND
+                  ! Update calving budgets
+                  if (groundedMaskForMassBudget(neighborWithIce) .eq. 1) then
+                     groundedCalvingThickness(neighborWithIce) = groundedCalvingThickness(neighborWithIce) + thickness(neighborWithIce)
+                  elseif (floatingMaskForMassBudget(neighborWithIce) .eq. 1) then
+                     floatingCalvingThickness(neighborWithIce) = floatingCalvingThickness(neighborWithIce) + thickness(neighborWithIce)
+                  endif
+               endif
+
+            endif ! check on nIceNeighbors
+
+         endif ! check if iCell has ice
+      end do ! loop over cells
+>>>>>>> d85d0dc7a7 (Account for multiple updates of calvingThickness within a timestep)
 
    end subroutine remove_small_islands
 
@@ -1353,6 +1445,12 @@ module li_calving
          ! === apply calving ===
          thickness(:) = thickness(:) - calvingThickness(:)
 
+<<<<<<< HEAD
+=======
+         call update_calving_budget(domain)
+         call remove_small_islands(meshPool, geometryPool)
+
+>>>>>>> d85d0dc7a7 (Account for multiple updates of calvingThickness within a timestep)
          block => block % next
       enddo
 
@@ -1533,6 +1631,7 @@ module li_calving
          call mpas_timer_stop("halo updates")
          ! === apply calving ===
          thickness(:) = thickness(:) - calvingThickness(:)
+         call update_calving_budget(domain)
 
          ! update mask
          call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
@@ -1557,7 +1656,7 @@ module li_calving
             endif
          enddo
          ! TODO: global reduce & reporting on amount of calving generated in this step
-
+         call update_calving_budget(domain)
          ! update mask
          call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
@@ -1582,6 +1681,11 @@ module li_calving
            endif
          enddo
          ! TODO: global reduce & reporting on amount of calving generated in this step
+<<<<<<< HEAD
+=======
+         call update_calving_budget(domain)
+         call remove_small_islands(meshPool, geometryPool)
+>>>>>>> d85d0dc7a7 (Account for multiple updates of calvingThickness within a timestep)
 
          block => block % next
       enddo
@@ -1715,7 +1819,7 @@ module li_calving
 
          ! === apply calving ===
          thickness(:) = thickness(:) - calvingThickness(:)
-
+         call update_calving_budget(domain)
          ! update mask
          call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
@@ -1739,7 +1843,7 @@ module li_calving
             endif
          enddo
          ! TODO: global reduce & reporting on amount of calving generated in this step
-
+         call update_calving_budget(domain)
          ! update mask
          call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
@@ -1764,6 +1868,11 @@ module li_calving
            endif
          enddo
          ! TODO: global reduce & reporting on amount of calving generated in this step
+<<<<<<< HEAD
+=======
+         call update_calving_budget(domain)
+         call remove_small_islands(meshPool, geometryPool)
+>>>>>>> d85d0dc7a7 (Account for multiple updates of calvingThickness within a timestep)
 
          block => block % next
       enddo
@@ -2147,11 +2256,16 @@ module li_calving
 
           ! === apply calving ===
           thickness(:) = thickness(:) - calvingThickness(:)
-
+          call update_calving_budget(domain)
           ! update mask
           call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
           err = ior(err, err_tmp)
 
+<<<<<<< HEAD
+=======
+          call remove_small_islands(meshPool, geometryPool)
+
+>>>>>>> d85d0dc7a7 (Account for multiple updates of calvingThickness within a timestep)
           block => block % next
 
       enddo ! associated(block)
@@ -2417,7 +2531,7 @@ module li_calving
 
       ! === apply calving ===
       thickness(:) = thickness(:) - calvingThickness(:)
-
+      call update_calving_budget(domain)
       ! update mask
       call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
       err = ior(err, err_tmp)
@@ -3448,7 +3562,7 @@ module li_calving
 
          ! === apply calving ===
          thickness(:) = thickness(:) - calvingThickness(:)
-
+         call update_calving_budget(domain)
          ! update mask
          call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
@@ -3464,7 +3578,7 @@ module li_calving
                thickness(iCell) = 0.0_RKIND
             endif
          enddo
-
+         call update_calving_budget(domain)
          ! update mask
          call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
@@ -3489,7 +3603,12 @@ module li_calving
            endif
          enddo
          ! TODO: global reduce & reporting on amount of calving generated in this step
+<<<<<<< HEAD
 
+=======
+         call update_calving_budget(domain)
+         call remove_small_islands(meshPool, geometryPool)
+>>>>>>> d85d0dc7a7 (Account for multiple updates of calvingThickness within a timestep)
          block => block % next
 
       enddo
@@ -4257,10 +4376,14 @@ module li_calving
       integer, dimension(:), pointer :: seedMask, growMask !masks to pass to flood-fill routine
       !integer, dimension(:), allocatable :: seedMaskOld !mask of where icebergs are removed, for debugging
 
-      real (kind=RKIND), dimension(:), pointer :: calvingThickness    ! thickness of ice that calves (computed in this subroutine)
       real (kind=RKIND), dimension(:), pointer :: calvingThicknessFromThreshold
+      real (kind=RKIND), dimension(:), pointer :: calvingThickness, &    ! thickness of ice that calves (computed in this subroutine)
+                                                  groundedCalvingThickness, &
+                                                  floatingCalvingThickness
       real (kind=RKIND), dimension(:), pointer :: thickness
-      integer, dimension(:), pointer :: cellMask
+      integer, dimension(:), pointer :: cellMask, &
+                                        groundedMaskForMassBudget, &
+                                        floatingMaskForMassBudget
       integer, dimension(:,:), pointer :: cellsOnCell ! list of cells that neighbor each cell
       integer, dimension(:), pointer :: nEdgesOnCell ! number of cells that border each cell
 
@@ -4358,6 +4481,10 @@ module li_calving
          call mpas_pool_get_array(geometryPool, 'thickness', thickness)
          call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
          call mpas_pool_get_array(geometryPool, 'calvingThicknessFromThreshold', calvingThicknessFromThreshold)
+         call mpas_pool_get_array(geometryPool, 'groundedCalvingThickness', groundedCalvingThickness)
+         call mpas_pool_get_array(geometryPool, 'floatingCalvingThickness', floatingCalvingThickness)
+         call mpas_pool_get_array(geometryPool, 'groundedMaskForMassBudget', groundedMaskForMassBudget)
+         call mpas_pool_get_array(geometryPool, 'floatingMaskForMassBudget', floatingMaskForMassBudget)
          call mpas_pool_get_dimension(geometryPool, 'nCells', nCells)
          call mpas_pool_get_dimension(geometryPool, 'nCellsSolve', nCellsSolve)
          !allocate(seedMaskOld(nCells+1)) ! debug: make this a mask of where icebergs were removed
@@ -4369,6 +4496,11 @@ module li_calving
                calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)  ! remove any remaining ice here
                calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)  ! remove any remaining ice here
                thickness(iCell) = 0.0_RKIND
+               if (groundedMaskForMassBudget(iCell) .eq. 1) then
+                  groundedCalvingThickness(iCell) = groundedCalvingThickness(iCell) + thickness(iCell)
+               elseif (floatingMaskForMassBudget(iCell) .eq. 1) then
+                  floatingCalvingThickness(iCell) = floatingCalvingThickness(iCell) + thickness(iCell)
+               endif
                localIcebergCellCount = localIcebergCellCount + 1
                !seedMaskOld(iCell) = 1 ! debug: make this a mask of where icebergs were removed
             endif
@@ -4543,6 +4675,50 @@ module li_calving
       call mpas_log_write("Flood fill complete.")
 
    end subroutine li_flood_fill
+
+
+!|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+!
+!    routine update_calving_budget
+!
+!> \brief Keep a running total of calving applied to grounded and floating
+!> ice, respectively. 
+!> \author Trevor Hillebrand
+!> \date   May 2022
+!> \details This routine should be called after each time time calvingThickness
+!> is applied, but before masks are updated which often happens multiple times
+!> in a timestep.
+!-----------------------------------------------------------------------
+   subroutine update_calving_budget(domain)
+      !-----------------------------------------------------------------
+      ! input/output variables
+      !-----------------------------------------------------------------
+      type (domain_type), intent(inout) :: domain
+
+      !-----------------------------------------------------------------
+      ! local variables
+      !-----------------------------------------------------------------
+      type (mpas_pool_type), pointer :: meshPool, geometryPool
+      integer, dimension(:), pointer :: groundedMaskForMassBudget, & ! binary masks for mass budget
+                                        floatingMaskForMassBudget
+      real (kind=RKIND), dimension(:), pointer ::  calvingThickness, &
+                                                   groundedCalvingThickness, & ! Grounded and floating components for mass budget
+                                                   floatingCalvingThickness
+
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'geometry', geometryPool)
+      call mpas_pool_get_array(geometryPool, 'groundedMaskForMassBudget', groundedMaskForMassBudget)
+      call mpas_pool_get_array(geometryPool, 'floatingMaskForMassBudget', floatingMaskForMassBudget)
+      call mpas_pool_get_array(geometryPool, 'groundedCalvingThickness', groundedCalvingThickness)
+      call mpas_pool_get_array(geometryPool, 'floatingCalvingThickness', floatingCalvingThickness)
+      call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
+
+      where (groundedMaskForMassBudget .eq. 1)
+          groundedCalvingThickness = calvingThickness
+      elsewhere (floatingMaskForMassBudget .eq. 1)
+          floatingCalvingThickness = calvingThickness
+      end where      
+
+   end subroutine update_calving_budget
 
 end module li_calving
 
