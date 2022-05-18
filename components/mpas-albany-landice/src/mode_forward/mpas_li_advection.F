@@ -393,6 +393,38 @@ module li_advection
       if ( (trim(config_thickness_advection) .eq. 'fo') .or. &
           (trim(config_thickness_advection) .eq. 'fct') ) then
 
+         ! Calculate flux across grounding line before applying
+         ! sfc/basal mass balance and advection
+         fluxAcrossGroundingLine(:) = 0.0_RKIND
+         fluxAcrossGroundingLineOnCells(:) = 0.0_RKIND
+         do iEdge = 1, nEdges
+            if (li_mask_is_grounding_line(edgeMask(iEdge))) then 
+               iCell1 = cellsOnEdge(1,iEdge)
+               iCell2 = cellsOnEdge(2,iEdge)
+               if (li_mask_is_grounded_ice(cellMask(iCell1))) then 
+                  GLfluxSign = 1.0_RKIND ! edge sign convention is positive from iCell1 to iCell2 on an edge
+                  theGroundedCell = iCell1
+               else 
+                  GLfluxSign = -1.0_RKIND
+                  theGroundedCell = iCell2
+               endif
+               do k = 1, nVertLevels
+                  thicknessFluxEdge = layerNormalVelocity(k,iEdge) * dvEdge(iEdge) * layerThicknessEdge(k,iEdge)
+                  fluxAcrossGroundingLine(iEdge) = fluxAcrossGroundingLine(iEdge) + GLfluxSign * thicknessFluxEdge / dvEdge(iEdge)
+               enddo
+               ! assign to grounded cell in fluxAcrossGroundingLineOnCells
+               if (thickness(theGroundedCell) <= 0.0_RKIND) then 
+                  ! This should never be the case, but checking to avoid
+                  ! possible divide by zero
+                  call mpas_log_write("thickness at a grounding line is unexepectedly <=0", MPAS_LOG_ERR)
+                  err = ior(err, 1)
+                  return
+               endif
+               fluxAcrossGroundingLineOnCells(theGroundedCell) = fluxAcrossGroundingLineOnCells(theGroundedCell) + &
+                       fluxAcrossGroundingLine(iEdge) / thickness(theGroundedCell) * config_ice_density  ! adjust to correct units
+            endif
+         enddo ! edges
+
          if (config_print_thickness_advection_info) then
             call mpas_log_write('Using first-order upwind for thickness advection')
             call mpas_log_write('advectTracers = $l', logicArgs=(/advectTracers/))
@@ -654,44 +686,6 @@ module li_advection
                                    thickness, &
                                    groundedToFloatingThickness, &
                                    nCells)
-
-         ! Calculate flux across grounding line
-         ! Do this after new thickness & mask have been calculated, including SMB/BMB
-         fluxAcrossGroundingLine(:) = 0.0_RKIND
-         fluxAcrossGroundingLineOnCells(:) = 0.0_RKIND
-         do iEdge = 1, nEdges
-            if (li_mask_is_grounding_line(edgeMask(iEdge))) then
-               iCell1 = cellsOnEdge(1,iEdge)
-               iCell2 = cellsOnEdge(2,iEdge)
-               if (li_mask_is_grounded_ice(cellMask(iCell1))) then
-                  GLfluxSign = 1.0_RKIND ! edge sign convention is positive from iCell1 to iCell2 on an edge
-                  theGroundedCell = iCell1
-               else
-                  GLfluxSign = -1.0_RKIND
-                  theGroundedCell = iCell2
-               endif
-               if (trim(config_thickness_advection) == 'fct') then
-                  do k = 1, nVertLevels
-                     fluxAcrossGroundingLine(iEdge) = fluxAcrossGroundingLine(iEdge) + GLfluxSign * layerThicknessEdgeFlux(k,iEdge)
-                  enddo
-               else
-                  do k = 1, nVertLevels
-                     layerThicknessEdgeFlux(k,iEdge) = layerNormalVelocity(k,iEdge) * layerThicknessEdge(k,iEdge)
-                     fluxAcrossGroundingLine(iEdge) = fluxAcrossGroundingLine(iEdge) + GLfluxSign * layerThicknessEdgeFlux(k,iEdge)
-                  enddo
-               endif
-               ! assign to grounded cell in fluxAcrossGroundingLineOnCells
-               if (thickness(theGroundedCell) <= 0.0_RKIND) then
-                  ! This should never be the case, but checking to avoid possible divide by zero
-                  call mpas_log_write("thickness at a grounding line is unexepectedly <=0", MPAS_LOG_ERR)
-                  err = ior(err, 1)
-                  return
-               endif
-               fluxAcrossGroundingLineOnCells(theGroundedCell) = fluxAcrossGroundingLineOnCells(theGroundedCell) + &
-                       fluxAcrossGroundingLine(iEdge) / thickness(theGroundedCell) * config_ice_density  ! adjust to correct units
-            endif
-         enddo ! edges
-
 
          ! Remap tracers to the standard vertical sigma coordinate
          ! Note: If tracers are not being advected, then this subroutine simply restores the
