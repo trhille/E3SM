@@ -655,6 +655,7 @@ module li_time_integration_fe_rk
       real (kind=RKIND), dimension(:,:), pointer :: layerNormalVelocity
       real (kind=RKIND), pointer :: calvingCFLdt, faceMeltingCFLdt
       integer, pointer :: processLimitingTimestep, config_rk_order, config_rk3_stages
+      real (kind=RKIND), dimension(:), pointer :: groundedToFloatingThickness
       integer, dimension(:), pointer :: edgeMask
 
       logical, pointer :: config_print_thickness_advection_info
@@ -748,8 +749,13 @@ module li_time_integration_fe_rk
 
          call mpas_pool_get_array(velocityPool, 'normalVelocity', normalVelocity)
          call mpas_pool_get_array(geometryPool, 'edgeMask', edgeMask)
+         call mpas_pool_get_array(geometryPool, 'groundedToFloatingThickness', groundedToFloatingThickness)
          call mpas_pool_get_array(velocityPool, 'layerNormalVelocity', layerNormalVelocity)
 
+         ! groundedToFloatingThickness is updated throughout
+         ! the timestep, so necessary to zero it at
+         ! the beginning of every timestep.
+         groundedToFloatingThickness(:) = 0.0_RKIND
          ! compute normal velocities and advective CFL limit for this block
 
          call li_layer_normal_velocity( &
