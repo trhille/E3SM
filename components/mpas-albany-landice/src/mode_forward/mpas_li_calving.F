@@ -1578,7 +1578,7 @@ module li_calving
                                         calvingVelocity, thickness, &
                                         xvelmean, yvelmean, calvingThickness, &
                                         floatingVonMisesThresholdStress, &
-                                        groundedVonMisesThresholdStress
+                                        groundedVonMisesThresholdStress, eEff
       real (kind=RKIND), dimension(:,:), pointer :: flowParamA, &
                                         temperature, layerThickness
       real (kind=RKIND), pointer :: config_default_flowParamA
@@ -1629,6 +1629,7 @@ module li_calving
           call mpas_pool_get_array(geometryPool, 'layerThickness', layerThickness)
           call mpas_pool_get_array(velocityPool, 'eMax', eMax)
           call mpas_pool_get_array(velocityPool, 'eMin', eMin)
+          call mpas_pool_get_array(velocityPool, 'eEff', eEff)
           call mpas_pool_get_array(velocityPool, 'vonMisesStress', vonMisesStress)
           call mpas_pool_get_array(velocityPool, 'flowParamA', flowParamA)
           call mpas_pool_get_array(velocityPool, 'xvelmean', xvelmean)
@@ -1690,6 +1691,8 @@ module li_calving
              call li_calculate_flowParamA(meshPool, temperature, thickness,flowParamA,err) ! Get MPAS flowParamA
           endif
 
+          eEff(:) = sqrt( 0.5_RKIND * ( (max(0.0_RKIND, eMax(iCell)))**2.0_RKIND + &
+                    (max(0.0_RKIND, eMin(iCell)))**2.0_RKIND) )
           !Using a depth-averaged ice viscosity parameter B_depthAvg
           !=sum(layerThickness(:,iCell) *
           !flowParamA(:,iCell)**(-1.0_RKIND/config_flowLawExponent), dim=1) /
@@ -1701,8 +1704,7 @@ module li_calving
              if ( thickness(iCell) > 0.0_RKIND ) then
                 vonMisesStress(iCell) = sqrt(3.0_RKIND) * sum(layerThickness(:,iCell) * &
                               flowParamA(:,iCell)**(-1.0_RKIND/config_flowLawExponent),dim=1) / &
-                              thickness(iCell) * ( 0.5_RKIND * ( (max(0.0_RKIND, eMax(iCell)))**2.0_RKIND + &
-                              (max(0.0_RKIND, eMin(iCell)))**2.0_RKIND) )**(1.0_RKIND / (2.0_RKIND * config_flowLawExponent))
+                              thickness(iCell) * eEff(iCell)**(1.0_RKIND / config_flowLawExponent)
              endif
 
              if (trim(config_von_Mises_stress_multiplier) == 'velocity') then
