@@ -1691,8 +1691,8 @@ module li_calving
              call li_calculate_flowParamA(meshPool, temperature, thickness,flowParamA,err) ! Get MPAS flowParamA
           endif
 
-          eEff(:) = sqrt( 0.5_RKIND * ( (max(0.0_RKIND, eMax(iCell)))**2.0_RKIND + &
-                    (max(0.0_RKIND, eMin(iCell)))**2.0_RKIND) )
+          eEff(:) = sqrt( 0.5_RKIND * ( (max(0.0_RKIND, eMax(:)))**2.0_RKIND + &
+                    (max(0.0_RKIND, eMin(:)))**2.0_RKIND) )
           !Using a depth-averaged ice viscosity parameter B_depthAvg
           !=sum(layerThickness(:,iCell) *
           !flowParamA(:,iCell)**(-1.0_RKIND/config_flowLawExponent), dim=1) /
