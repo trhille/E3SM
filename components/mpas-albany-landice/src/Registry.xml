@@ -224,6 +224,14 @@
                             description="Source of von MIses threshold stress value for calving from floating ice."
                             possible_values="'data' (read from input file), 'scalar' (specified by config_floating_von_Mises_threshold_stress)" 
                 />
+                <nml_option name="config_von_Mises_stress_multiplier" type="character" default_value="velocity" units="unitless"
+                            description="Multiplier on von Mises stress for von Mises calving."
+                            possible_values="'velocity', 'strain_rate'"
+                />
+                <nml_option name="config_von_Mises_calving_length_scale" type="real" default_value="1000.0" units="unitless"
+                            description="Length scale multiplying strain rate and von Mises stress when 'config_von_Mises_stress_multiplier' = 'strain_rate'."
+                            possible_values="Any positive real value"
+                />
 		<nml_option name="config_finalize_damage_after_advection" type="logical" default_value=".true." units="unitless"
                         description="If true, then the 'li_finalize_damage_after_advection' subroutine is applied, doing the following: 1) set the value of damage at the grounding line based on the choice of 'config_damage_gl_setting', 2) reset the value of damage to its initial value (to avoid healing), based on choice of 'config_preserve_damage', 3) couple the updated damage value to the rheology if 'config_damage_rheology_coupling' is true."
 		            possible_values=".true. or .false."

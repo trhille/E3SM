@@ -1567,9 +1567,11 @@ module li_calving
       real (kind=RKIND), pointer :: config_grounded_von_Mises_threshold_stress, &
                                     config_floating_von_Mises_threshold_stress, &
                                     config_flowLawExponent, config_calving_speed_limit, &
-                                    config_damage_calving_threshold
+                                    config_damage_calving_threshold, &
+                                    config_von_Mises_calving_length_scale
       character (len=StrKIND), pointer :: config_grounded_von_Mises_threshold_stress_source, &
-                                          config_floating_von_Mises_threshold_stress_source
+                                          config_floating_von_Mises_threshold_stress_source, &
+                                          config_von_Mises_stress_multiplier
       character (len=StrKIND), pointer :: config_damage_calving_method
       logical, pointer :: config_use_Albany_flowA_eqn_for_vM
       real (kind=RKIND), dimension(:), pointer :: eMax, eMin, &
@@ -1601,6 +1603,8 @@ module li_calving
       call mpas_pool_get_config(liConfigs, 'config_calving_speed_limit', config_calving_speed_limit)
       call mpas_pool_get_config(liConfigs, 'config_damage_calving_threshold', config_damage_calving_threshold)
       call mpas_pool_get_config(liConfigs, 'config_damage_calving_method', config_damage_calving_method)
+      call mpas_pool_get_config(liConfigs, 'config_von_Mises_stress_multiplier', config_von_Mises_stress_multiplier)
+      call mpas_pool_get_config(liConfigs, 'config_von_Mises_calving_length_scale', config_von_Mises_calving_length_scale)
 
       !call mpas_pool_get_config(liConfigs, 'config_default_flowParamA',
       !config_default_flowParamA) ! REMOVE THIS ONCE YOU CAN GET A FROM
@@ -1701,16 +1705,30 @@ module li_calving
                               (max(0.0_RKIND, eMin(iCell)))**2.0_RKIND) )**(1.0_RKIND / (2.0_RKIND * config_flowLawExponent))
              endif
 
-             ! Calculate calving velocity for grounded cells at marine margin
-             if ( .not. li_mask_is_floating_ice(cellMask(iCell)) ) then
-                calvingVelocity(iCell) = min(sqrt(xvelmean(iCell)**2.0_RKIND + yvelmean(iCell)**2.0_RKIND) * &
-                                         vonMisesStress(iCell) / groundedVonMisesThresholdStress(iCell), config_calving_speed_limit)
-             ! If config_floating_von_Mises_threshold_stress is not 0.0, calculate
-             ! calvingVelocity. If config_floating_von_Mises_threshold_stress is
-             ! 0.0, remove floating ice in loop below.
-             elseif ( li_mask_is_floating_ice(cellMask(iCell)) .and. config_floating_von_Mises_threshold_stress .ne. 0.0_RKIND) then
-                calvingVelocity(iCell) = min(sqrt(xvelmean(iCell)**2 + yvelmean(iCell)**2) * &
-                                         vonMisesStress(iCell) / floatingVonMisesThresholdStress(iCell), config_calving_speed_limit)
+             if (trim(config_von_Mises_stress_multiplier) == 'velocity') then
+                ! Calculate calving velocity for grounded cells at marine margin
+                if ( .not. li_mask_is_floating_ice(cellMask(iCell)) ) then
+                    calvingVelocity(iCell) = min(sqrt(xvelmean(iCell)**2.0_RKIND + yvelmean(iCell)**2.0_RKIND) * &
+                                            vonMisesStress(iCell) / groundedVonMisesThresholdStress(iCell), config_calving_speed_limit)
+                 ! If config_floating_von_Mises_threshold_stress is not 0.0, calculate
+                 ! calvingVelocity. If config_floating_von_Mises_threshold_stress is
+                 ! 0.0, remove floating ice in loop below.
+                elseif ( li_mask_is_floating_ice(cellMask(iCell)) .and. config_floating_von_Mises_threshold_stress .ne. 0.0_RKIND) then
+                   calvingVelocity(iCell) = min(sqrt(xvelmean(iCell)**2 + yvelmean(iCell)**2) * &
+                                            vonMisesStress(iCell) / floatingVonMisesThresholdStress(iCell), config_calving_speed_limit)
+                endif
+             elseif (trim(config_von_Mises_stress_multiplier) == 'strain_rate') then
+                ! Calculate calving velocity for grounded cells at marine margin
+                if ( .not. li_mask_is_floating_ice(cellMask(iCell)) ) then
+                    calvingVelocity(iCell) = min(config_von_Mises_calving_length_scale * max(0.0_RKIND, eMax(iCell)) * &
+                                            vonMisesStress(iCell) / groundedVonMisesThresholdStress(iCell), config_calving_speed_limit)
+                 ! If config_floating_von_Mises_threshold_stress is not 0.0,
+                 ! calculate calvingVelocity. If config_floating_von_Mises_threshold_stress is
+                 ! 0.0, remove floating ice in loop below.
+                elseif ( li_mask_is_floating_ice(cellMask(iCell)) .and. config_floating_von_Mises_threshold_stress .ne. 0.0_RKIND) then
+                   calvingVelocity(iCell) = min(config_von_Mises_calving_length_scale * max(0.0_RKIND, eMax(iCell)) * &
+                                            vonMisesStress(iCell) / floatingVonMisesThresholdStress(iCell), config_calving_speed_limit)
+                endif
              endif
           enddo
 
