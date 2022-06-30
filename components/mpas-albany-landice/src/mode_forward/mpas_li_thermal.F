@@ -718,7 +718,8 @@ module li_thermal
            floatingBasalMassBal,     & ! basal mass balance for floating ice
            basalWaterThickness,      & ! basal water thickness (m)
            thickness,                & ! ice thickness (m)
-           upperSurface                ! ice upper surface (m)
+           upperSurface,             & ! ice upper surface (m)
+           energyImbalance
 
       real (kind=RKIND), dimension(:,:), pointer :: &
            temperature,              & ! interior ice temperature (K)
@@ -837,6 +838,7 @@ module li_thermal
          call mpas_pool_get_array(thermalPool, 'basalHeatFlux', basalHeatFlux)
          call mpas_pool_get_array(thermalPool, 'basalFrictionFlux', basalFrictionFlux)
          call mpas_pool_get_array(thermalPool, 'heatDissipation', heatDissipation)
+         call mpas_pool_get_array(thermalPool, 'energyImbalance', energyImbalance)
 
          ! get fields from the scratch pool
          call mpas_pool_get_field(scratchPool, 'iceCellMask', thermalCellMaskField)
@@ -1205,7 +1207,7 @@ module li_thermal
                   ! Verify that the net input of energy into the column is equal to the change in internal energy.
 
                   deltaEnergy = (surfaceConductiveFlux(iCell) - basalConductiveFlux(iCell) + columnHeatDissipation) * deltat
-
+                  energyImbalance(iCell) = (finalEnergy - initialEnergy - deltaEnergy) / deltat
                   !TODO - Confirm that this is a reasonable error threshold
                   if (abs((finalEnergy - initialEnergy - deltaEnergy) / deltat) > 1.0e-8_RKIND) then
 

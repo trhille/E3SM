@@ -1555,7 +1555,10 @@ is the value of that variable from the *previous* time level!
                 />
                 <var name="heatDissipation" type="real" dimensions="nVertLevels nCells Time" units="deg s^{-1}"
                      description="interior heat dissipation rate, divided by rhoi*cp_ice"
-                />
+		/>
+	        <var name="energyImbalance" type="real" dimensions="nCells Time" units="W m^{-2}"
+		     description="Energy imbalance from thermal solver, for debugging. Calculated as finalEnergy - initialEnergy - deltaEnergy"
+	        />
         </var_struct>
 
 <!-- ================ -->
