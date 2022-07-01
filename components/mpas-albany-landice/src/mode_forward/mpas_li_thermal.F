@@ -711,7 +711,8 @@ module li_thermal
            basalTemperature,         & ! basal ice temperature (K)
            surfaceAirTemperature,    & ! surface air temperature (K)
            basalHeatFlux,            & ! basal heat flux into the ice (W m^{-2}, positive upward)
-           basalFrictionFlux,        & ! basal frictional flux into the ice (W m^{-2})
+           basalFrictionFlux,        &
+           basalFrictionFluxPrevious,        & ! basal frictional flux into the ice (W m^{-2})
            surfaceConductiveFlux,    & ! conductive heat flux at the upper surface (W m^{-2}, positive down)
            basalConductiveFlux,      & ! conductive heat flux at the lower surface (W m^{-2}, positive down)
            groundedBasalMassBal,     & ! basal mass balance for grounded ice
@@ -836,6 +837,7 @@ module li_thermal
          call mpas_pool_get_array(thermalPool, 'surfaceConductiveFlux', surfaceConductiveFlux)
          call mpas_pool_get_array(thermalPool, 'basalConductiveFlux', basalConductiveFlux)
          call mpas_pool_get_array(thermalPool, 'basalHeatFlux', basalHeatFlux)
+         call mpas_pool_get_array(thermalPool, 'basalFrictionFluxPrevious', basalFrictionFluxPrevious)
          call mpas_pool_get_array(thermalPool, 'basalFrictionFlux', basalFrictionFlux)
          call mpas_pool_get_array(thermalPool, 'heatDissipation', heatDissipation)
          call mpas_pool_get_array(thermalPool, 'energyImbalance', energyImbalance)
@@ -901,6 +903,8 @@ module li_thermal
             surfaceAirTemperature(:) = surfaceAirTemperature(:) - kelvin_to_celsius
             surfaceTemperature(:) = surfaceTemperature(:) - kelvin_to_celsius
             basalTemperature(:) = basalTemperature(:) - kelvin_to_celsius
+
+            energyImbalance(:) = 0.0_RKIND
 
             ! allocate some vertical arrays
             allocate(subdiagonal(nVertLevels+2))  ! temperature/enthalpy in each layer, plus surface and basal temperature
@@ -1000,7 +1004,7 @@ module li_thermal
                           enthalpy(:,iCell),              &
                           heatDissipation(:,iCell),       &
                           basalHeatFlux(iCell),           &
-                          basalFrictionFlux(iCell),       &
+                          basalFrictionFluxPrevious(iCell),       &
                           diffusivity,                    &
                           subdiagonal,                    &
                           diagonal,                       &
@@ -1125,7 +1129,7 @@ module li_thermal
                           basalTemperature(iCell),        &
                           heatDissipation(:,iCell),       &
                           basalHeatFlux(iCell),           &
-                          basalFrictionFlux(iCell),       &
+                          basalFrictionFluxPrevious(iCell),       &
                           subdiagonal,                    &
                           diagonal,                       &
                           superdiagonal,                  &
@@ -1231,10 +1235,10 @@ module li_thermal
                            realArgs=(/finalEnergy - initialEnergy - deltaEnergy/))
                         call mpas_log_write(' ')
                         call mpas_log_write('Basal fluxes:')
-                        call mpas_log_write('frictional =$r', realArgs=(/basalFrictionFlux(iCell)/))
+                        call mpas_log_write('frictional =$r', realArgs=(/basalFrictionFluxPrevious(iCell)/))
                         call mpas_log_write('geothermal =$r', realArgs=(/basalHeatFlux(iCell)/))
                         call mpas_log_write('flux for bottom melting =$r', &
-                           realArgs=(/basalFrictionFlux(iCell) + basalHeatFlux(iCell) + basalConductiveFlux(iCell)/))
+                           realArgs=(/basalFrictionFluxPrevious(iCell) + basalHeatFlux(iCell) + basalConductiveFlux(iCell)/))
                      endif   ! verboseColumn
 
                      call mpas_log_write('li_thermal, energy conservation error: indexToCellID=$i, imbalance=$r (W/m2):', MPAS_LOG_WARN, &
@@ -1283,7 +1287,7 @@ module li_thermal
                  basalTemperature,             &
                  waterFrac,                    &
                  enthalpy,                     &
-                 basalFrictionFlux,            &
+                 basalFrictionFluxPrevious,            &
                  basalHeatFlux,                &
                  basalConductiveFlux,          &
                  basalWaterThickness,          &
@@ -1351,6 +1355,7 @@ module li_thermal
 
          enddo
 
+         basalFrictionFluxPrevious(:) = basalFrictionFlux(:)
          ! clean up
          call mpas_deallocate_scratch_field(thermalCellMaskField, .true.)
          if (allocated(subdiagonal)) deallocate(subdiagonal)
@@ -1703,7 +1708,8 @@ module li_thermal
      real(kind=RKIND), dimension(:), pointer :: &
           basalSpeed,              & ! basal ice speed, reconstructed at cell centers (m s^{-1})
           betaSolve,               & ! basal traction parameter (Pa m^{-1} s); use betaSolve to treat floating ice correctly
-          basalFrictionFlux          ! heat flux due to basal friction (W^{m-2}), computed in this subroutine
+          basalFrictionFlux,       & ! heat flux due to basal friction (W^{m-2}), computed in this subroutine
+          basalFrictionFluxPrevious
 
      integer, dimension(:), pointer :: cellMask
 
@@ -1755,12 +1761,17 @@ module li_thermal
 
         ! get fields from the thermal pool
         call mpas_pool_get_array(thermalPool, 'basalFrictionFlux', basalFrictionFlux)
+        call mpas_pool_get_array(thermalPool, 'basalFrictionFluxPrevious', basalFrictionFluxPrevious)
 
         ! get config parameters
         call mpas_pool_get_config(liConfigs, 'config_stats_cell_ID', config_stats_cell_ID)
         call mpas_pool_get_config(liConfigs, 'config_print_thermal_info', config_print_thermal_info)
 
         if (config_print_thermal_info) call mpas_log_write('Compute basal friction flux')
+
+        if ( all(basalFrictionFluxPrevious /= 0.0_RKIND) ) then
+           basalFrictionFluxPrevious(:) = basalFrictionFlux(:)
+        endif
 
         ! Compute basal frictional heating for each cell
         do iCell = 1, nCells
@@ -1771,6 +1782,10 @@ module li_thermal
            endif
         enddo
         ! < TODO: If beta units are changed to be SI, remove scyr factor
+
+        if ( all(basalFrictionFluxPrevious == 0.0_RKIND) ) then
+           basalFrictionFluxPrevious(:) = basalFrictionFlux(:)
+        endif
 
         ! Optional debugging output
         if (config_print_thermal_info) then

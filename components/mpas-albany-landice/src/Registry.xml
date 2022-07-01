@@ -1553,6 +1553,9 @@ is the value of that variable from the *previous* time level!
                 <var name="basalFrictionFlux" type="real" dimensions="nCells Time" units="W m^{-2}"
                      description="basal frictional heat flux into the ice (positive upward)"
                 />
+                <var name="basalFrictionFluxPrevious" type="real" dimensions="nCells Time" units="W m^{-2}"
+                     description="basal frictional heat flux into the ice from previous timestep for thermal solver(positive upward)"
+                />
                 <var name="heatDissipation" type="real" dimensions="nVertLevels nCells Time" units="deg s^{-1}"
                      description="interior heat dissipation rate, divided by rhoi*cp_ice"
 		/>
