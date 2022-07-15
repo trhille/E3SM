@@ -287,7 +287,7 @@ module li_core
          call mpas_pool_get_array(meshPool, 'cellProcID', cellProcID)
          cellProcID(:) = domain % dminfo % my_proc_id
 
-         call landice_init_block(block, domain, domain % dminfo, err_tmp)
+         call landice_init_block(block, domain % dminfo, err_tmp)
          err = ior(err, err_tmp)
 
          block => block % next
@@ -804,10 +804,6 @@ module li_core
          call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
 
          call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
-         call mpas_timer_start("halo updates")
-         call mpas_dmpar_field_halo_exch(domain, 'groundedMaskForMassBudget')
-         call mpas_dmpar_field_halo_exch(domain, 'floatingMaskForMassBudget')
-         call mpas_timer_stop("halo updates")
          call li_update_geometry(geometryPool)
 
          block => block % next
@@ -928,7 +924,7 @@ module li_core
 !>  This routine initializes blocks for the land ice core.
 !
 !-----------------------------------------------------------------------
-   subroutine landice_init_block(block, domain, dminfo, err)
+   subroutine landice_init_block(block, dminfo, err)
 
       use mpas_derived_types
       use mpas_pool_routines
@@ -946,13 +942,14 @@ module li_core
       !
       !-----------------------------------------------------------------
       type (dm_info), intent(in) :: dminfo             !< Input: Domain info
+
       !-----------------------------------------------------------------
       !
       ! input/output variables
       !
       !-----------------------------------------------------------------
       type (block_type), intent(inout) :: block         !< Input/output: Block object
-      type (domain_type), intent(inout) :: domain  !< Input/output: Domain
+
       !-----------------------------------------------------------------
       !
       ! output variables
@@ -1042,10 +1039,7 @@ module li_core
       ! Mask init identifies initial ice extent
       call li_calculate_mask_init(geometryPool, err=err_tmp)
       err = ior(err, err_tmp)
-      call mpas_timer_start("halo updates")
-      call mpas_dmpar_field_halo_exch(domain, 'groundedMaskForMassBudget')
-      call mpas_dmpar_field_halo_exch(domain, 'floatingMaskForMassBudget')
-      call mpas_timer_stop("halo updates")
+
       ! Initialize thicknessOld variable used to calculate dHdt
       call mpas_pool_get_array(geometryPool, 'thickness', thickness)
       call mpas_pool_get_array(geometryPool, 'thicknessOld', thicknessOld)
