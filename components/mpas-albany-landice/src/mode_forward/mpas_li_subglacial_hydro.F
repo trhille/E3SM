@@ -172,6 +172,10 @@ module li_subglacial_hydro
 
          call calc_hydro_mask(domain)
 
+         call mpas_timer_start("halo updates")
+         call mpas_dmpar_field_halo_exch(domain, 'groundedMaskForMassBudget')
+         call mpas_dmpar_field_halo_exch(domain, 'floatingMaskForMassBudget')
+         call mpas_timer_stop("halo updates")
          ! remove invalid values - not necessary on restart, but shouldn't hurt
          call mpas_pool_get_array(hydroPool, 'waterThickness', waterThickness)
          waterThickness = max(0.0_RKIND, waterThickness)

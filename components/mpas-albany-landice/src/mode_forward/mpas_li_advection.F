@@ -374,6 +374,10 @@ module li_advection
       err = ior(err, err_tmp)
 
       layerThicknessEdgeFlux(:,:) = 0.0_RKIND
+      call mpas_timer_start("halo updates")
+      call mpas_dmpar_field_halo_exch(domain, 'groundedMaskForMassBudget')
+      call mpas_dmpar_field_halo_exch(domain, 'floatingMaskForMassBudget')
+      call mpas_timer_stop("halo updates")
       !-----------------------------------------------------------------
       ! Horizontal transport of thickness and tracers
       !-----------------------------------------------------------------
@@ -577,6 +581,10 @@ module li_advection
          thickness = sum(layerThickness, 1)
          call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
 
+         call mpas_timer_start("halo updates")
+         call mpas_dmpar_field_halo_exch(domain, 'groundedMaskForMassBudget')
+         call mpas_dmpar_field_halo_exch(domain, 'floatingMaskForMassBudget')
+         call mpas_timer_stop("halo updates")
          !-----------------------------------------------------------------
          ! Add the surface and basal mass balance to the layer thickness
          !-----------------------------------------------------------------
@@ -663,6 +671,10 @@ module li_advection
          call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
 
+         call mpas_timer_start("halo updates")
+         call mpas_dmpar_field_halo_exch(domain, 'groundedMaskForMassBudget')
+         call mpas_dmpar_field_halo_exch(domain, 'floatingMaskForMassBudget')
+         call mpas_timer_stop("halo updates")
          ! Remap tracers to the standard vertical sigma coordinate
          ! Note: If tracers are not being advected, then this subroutine simply restores the
          !       layer thickness to sigma coordinate values.

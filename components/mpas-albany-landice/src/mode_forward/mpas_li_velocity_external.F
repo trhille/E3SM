@@ -876,7 +876,10 @@ subroutine li_velocity_external_write_albany_mesh(domain)
       ! code is currently organized, that would be a circular dependency.a
 
       call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err)
-
+      call mpas_timer_start("halo updates")
+      call mpas_dmpar_field_halo_exch(domain, 'groundedMaskForMassBudget')
+      call mpas_dmpar_field_halo_exch(domain, 'floatingMaskForMassBudget')
+      call mpas_timer_stop("halo updates")
       ! Lower surface is based on floatation for floating ice.  For grounded ice (and non-ice areas) it is the bed.
       where ( li_mask_is_floating_ice(cellMask) )
          lowerSurface = config_sea_level - thickness * (config_ice_density / config_ocean_density)

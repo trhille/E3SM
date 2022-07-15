@@ -1206,6 +1206,10 @@ module li_time_integration_fe_rk
          endif
 
          call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
+         call mpas_timer_start("halo updates")
+         call mpas_dmpar_field_halo_exch(domain, 'groundedMaskForMassBudget')
+         call mpas_dmpar_field_halo_exch(domain, 'floatingMaskForMassBudget')
+         call mpas_timer_stop("halo updates")
          call li_update_geometry(geometryPool)
 
          block => block % next
