@@ -247,6 +247,10 @@ contains
             call li_update_geometry(geometryPool)
             call  li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
 
+            call mpas_timer_start("halo updates")
+            call mpas_dmpar_field_halo_exch(domain, 'groundedMaskForMassBudget')
+            call mpas_dmpar_field_halo_exch(domain, 'floatingMaskForMassBudget')
+            call mpas_timer_stop("halo updates")
             block => block % next
          end do
 
@@ -697,6 +701,10 @@ contains
       call  li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
       err = ior(err, err_tmp)
 
+      call mpas_timer_start("halo updates")
+      call mpas_dmpar_field_halo_exch(domain, 'groundedMaskForMassBudget')
+      call mpas_dmpar_field_halo_exch(domain, 'floatingMaskForMassBudget')
+      call mpas_timer_stop("halo updates")
       ! deallocate memory
       deallocate(globalArrayThickness)
       deallocate(gatheredArrayThickness)

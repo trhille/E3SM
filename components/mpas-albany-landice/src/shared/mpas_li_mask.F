@@ -532,29 +532,29 @@ contains
              endif
          enddo
 
-      ! Update groundedToFloatingThickness based on new masks
-      do iCell = 1, nCells
-        ! find locations that had grounded ice before but now have floating ice
-        if ( (groundedMaskForMassBudgetTemporaryField % array(iCell) .eq. 1) .and. &
-             (floatingMaskForMassBudget(iCell) .eq. 1) ) then
-           groundedToFloatingThickness(iCell) = groundedToFloatingThickness(iCell) + thickness(iCell)
-        ! find locations that had floating ice before but now have grounded ice
-        else if ( (floatingMaskForMassBudgetTemporaryField % array(iCell) .eq. 1) .and. &
-                  (groundedMaskForMassBudget(iCell) .eq. 1) ) then
-           groundedToFloatingThickness(iCell) = groundedToFloatingThickness(iCell) - thickness(iCell)
-        endif
-      enddo
-         ! Now use flood fill to identify all floating ice connected to the open
-         ! ocean. Subglacial lakes are any floating ice that are not in the
-         ! resulting flood fill mask. Commented code below does not yet work
-         ! because flood fill needs to be moved from li_calving to a shared
-         ! routine.
-         ! call li_flood_fill(seedMask=seedMask, growMask=li_mask_is_floating_ice(cellMask), domain)
+         ! Update groundedToFloatingThickness based on new masks
+         do iCell = 1, nCells
+           ! find locations that had grounded ice before but now have floating ice
+           if ( (groundedMaskForMassBudgetTemporaryField % array(iCell) .eq. 1) .and. &
+                (floatingMaskForMassBudget(iCell) .eq. 1) ) then
+              groundedToFloatingThickness(iCell) = groundedToFloatingThickness(iCell) + thickness(iCell)
+           ! find locations that had floating ice before but now have grounded ice
+           else if ( (floatingMaskForMassBudgetTemporaryField % array(iCell) .eq. 1) .and. &
+                     (groundedMaskForMassBudget(iCell) .eq. 1) ) then
+              groundedToFloatingThickness(iCell) = groundedToFloatingThickness(iCell) - thickness(iCell)
+           endif
+         enddo
+            ! Now use flood fill to identify all floating ice connected to the open
+            ! ocean. Subglacial lakes are any floating ice that are not in the
+            ! resulting flood fill mask. Commented code below does not yet work
+            ! because flood fill needs to be moved from li_calving to a shared
+            ! routine.
+            ! call li_flood_fill(seedMask=seedMask, growMask=li_mask_is_floating_ice(cellMask), domain)
 
-         !where (li_mask_is_floating(cellMask) and seedMask .eq. 0)
-         !      groundedMaskForBudget = 1
-         !      gloatingMaskForMassBudget = 0
-         !end where
+            !where (li_mask_is_floating(cellMask) and seedMask .eq. 0)
+            !      groundedMaskForBudget = 1
+            !      gloatingMaskForMassBudget = 0
+            !end where
 
       endif
       !call mpas_timer_stop('calculate mask cell')
