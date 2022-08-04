@@ -513,8 +513,8 @@ contains
                       if (li_mask_is_grounded_ice(cellMask(iCellNeighbor))) then
                           groundedMaskForMassBudget(i) = 1
                           floatingMaskForMassBudget(i) = 0
+                          cycle ! no need to look at additional neighbors
                       endif
-                      cycle ! no need to look at additional neighbors
                    enddo
                 endif
  
@@ -526,8 +526,8 @@ contains
                 !    if ( (.not. li_mask_is_ice(cellMask(iCellNeighbor))) .and. &
                 !         (bedTopography(iCellNeighbor) < config_sea_level) ) then
                 !       seedMask = 1
+                !       cycle ! no need to look at additional neighbors
                 !    endif
-                !    cycle ! no need to look at additional neighbors
                 ! enddo 
              endif
          enddo
