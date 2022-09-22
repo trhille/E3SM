@@ -3103,7 +3103,7 @@ module li_calving
       logical, pointer :: config_print_calving_info
 
       real (kind=RKIND), dimension(:), pointer :: thickness
-      real (kind=RKIND), dimension(:), pointer :: eMax
+      real (kind=RKIND), dimension(:), pointer :: eMax, eMin
       real (kind=RKIND), dimension(:), pointer :: tauMax, tauMin
       real (kind=RKIND), dimension(:), pointer :: floatingBasalMassBal
       real (kind=RKIND), dimension(:), pointer :: damage
@@ -3165,6 +3165,7 @@ module li_calving
          call mpas_pool_get_array(geometryPool, 'floatingBasalMassBal', floatingBasalMassBal)
 
          call mpas_pool_get_array(velocityPool, 'eMax', eMax)
+         call mpas_pool_get_array(velocityPool, 'eMin', eMin)
          call mpas_pool_get_array(velocityPool, 'tauMax', tauMax)
          call mpas_pool_get_array(velocityPool, 'tauMin', tauMin)
          call mpas_pool_get_array(velocityPool, 'principalStrainRateRatio', principalStrainRateRatio)
@@ -3177,7 +3178,7 @@ module li_calving
              ! Compute the hydrostatic to tensile stress ratio (equation 24 from Bassis and Ma, 2015, EPSL, 409, C)
              ! In Bassis & Ma this is beta, defined as ratio of principal strain rates.  Here we calculate as ratio of
              ! deviatoric stresses, which is equivalent.
-             principalStrainRateRatio = tauMin / tauMax
+             principalStrainRateRatio = eMin / eMax
 
              s0 = &
              config_ice_density*(config_ocean_density-config_ice_density)*gravity*thickness/(2.0_RKIND*tauMax*config_ocean_density)
