@@ -720,6 +720,8 @@ module li_core
       type (mpas_pool_type), pointer :: geometryPool, meshPool, velocityPool
       logical, pointer :: config_do_restart, config_write_output_on_startup, config_write_stats_on_startup
       character(len=StrKIND), pointer :: config_velocity_solver
+      logical, pointer :: config_initialize_damage_with_stiffnessFactor
+      real (kind=RKIND), pointer :: config_damage_rheology_coupling_exponent
       ! Variables needed for printing timestamps
       type (MPAS_Time_Type) :: currTime
       character(len=StrKIND) :: timeStamp
@@ -730,6 +732,8 @@ module li_core
       logical :: solveVelo
 
       integer, dimension(:), pointer :: vertexMask
+      real (kind=RKIND), dimension(:), pointer :: damage
+      real (kind=RKIND), dimension(:), pointer :: stiffnessFactor
 
 
       err = 0
@@ -741,6 +745,11 @@ module li_core
       call mpas_pool_get_config(liConfigs, 'config_write_output_on_startup', config_write_output_on_startup)
       call mpas_pool_get_config(liConfigs, 'config_write_stats_on_startup', config_write_stats_on_startup)
       call mpas_pool_get_config(liConfigs, 'config_velocity_solver', config_velocity_solver)
+      call mpas_pool_get_config(liConfigs, 'config_initialize_damage_with_stiffnessFactor', config_initialize_damage_with_stiffnessFactor)
+      call mpas_pool_get_config(liConfigs, 'config_damage_rheology_coupling_exponent', config_damage_rheology_coupling_exponent)
+      call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
+      call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
+      call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
 
       currTime = mpas_get_clock_time(domain % clock, MPAS_NOW, err_tmp)
       err = ior(err, err_tmp)
@@ -748,7 +757,12 @@ module li_core
       err = ior(err, err_tmp)
       call mpas_log_write('Initial timestep ' // trim(timeStamp))
 
-
+      ! initialize damage using stiffnessFactor
+      call mpas_pool_get_array(velocityPool, 'stiffnessFactor', stiffnessFactor)
+      call mpas_pool_get_array(geometryPool, 'damage', damage)
+      if ( config_initialize_damage_with_stiffnessFactor ) then
+         damage(:) = (1.0_RKIND - stiffnessFactor(:))**(1.0_RKIND / config_damage_rheology_coupling_exponent)
+      end if
       ! ===
       ! === Calculate Initial state
       ! ===
