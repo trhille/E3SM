@@ -761,7 +761,11 @@ module li_core
       call mpas_pool_get_array(velocityPool, 'stiffnessFactor', stiffnessFactor)
       call mpas_pool_get_array(geometryPool, 'damage', damage)
       if ( config_initialize_damage_with_stiffnessFactor ) then
-         damage(:) = (1.0_RKIND - stiffnessFactor(:))**(1.0_RKIND / config_damage_rheology_coupling_exponent)
+         where (stiffnessFactor < 1.0_RKIND)
+             damage = (1.0_RKIND - stiffnessFactor)**(1.0_RKIND / config_damage_rheology_coupling_exponent)
+         elsewhere
+             damage = 0.0_RKIND
+         endwhere
       end if
       ! ===
       ! === Calculate Initial state
