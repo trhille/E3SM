@@ -3097,6 +3097,7 @@ module li_calving
 
    end subroutine damage_calving
 
+
 !|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
 !
 !    routine li_calculate_damage
@@ -3413,6 +3414,7 @@ module li_calving
       type (mpas_pool_type), pointer :: scratchPool
       real(kind=RKIND), pointer :: config_damage_stiffness_min
       logical, pointer :: config_damage_rheology_coupling
+      real (kind=RKIND), pointer :: config_damage_rheology_coupling_exponent
       logical, pointer :: config_preserve_damage
       logical, pointer :: config_print_calving_info
       character (len=StrKIND), pointer :: config_damage_gl_setting
@@ -3437,6 +3439,7 @@ module li_calving
       call mpas_pool_get_config(liConfigs, 'config_damage_rheology_coupling', config_damage_rheology_coupling)
       call mpas_pool_get_config(liConfigs, 'config_damage_gl_setting', config_damage_gl_setting)
       call mpas_pool_get_config(liConfigs, 'config_preserve_damage', config_preserve_damage)
+      call mpas_pool_get_config(liConfigs, 'config_damage_rheology_coupling_exponent', config_damage_rheology_coupling_exponent)
 
       ! block loop
       block => domain % blocklist
@@ -3538,7 +3541,7 @@ module li_calving
         if (config_damage_rheology_coupling) then
             do iCell = 1, nCells
                 if (li_mask_is_floating_ice(cellMask(iCell))) then
-                    stiffnessFactor(iCell) = 1.0_RKIND - damage(iCell)
+                    stiffnessFactor(iCell) = 1.0_RKIND - damage(iCell)**config_damage_rheology_coupling_exponent
                     if (stiffnessFactor(iCell) < config_damage_stiffness_min) then
                         stiffnessFactor(iCell) = config_damage_stiffness_min
                     end if
