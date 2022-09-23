@@ -3413,12 +3413,14 @@ module li_calving
       type (mpas_pool_type), pointer :: velocityPool
       type (mpas_pool_type), pointer :: scratchPool
       real(kind=RKIND), pointer :: config_damage_stiffness_min
+      real(kind=RKIND), pointer :: deltat
       logical, pointer :: config_damage_rheology_coupling
       real (kind=RKIND), pointer :: config_damage_rheology_coupling_exponent
       logical, pointer :: config_preserve_damage
       logical, pointer :: config_print_calving_info
       character (len=StrKIND), pointer :: config_damage_gl_setting
       real (kind=RKIND), dimension(:), pointer :: damage
+      real (kind=RKIND), dimension(:), pointer :: ddamagedt
       real (kind=RKIND), dimension(:), pointer :: damageMax
       real (kind=RKIND), dimension(:), pointer :: damageNye
       real (kind=RKIND), dimension(:), pointer :: stiffnessFactor
@@ -3452,11 +3454,12 @@ module li_calving
 
          ! get fields
          call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
-
+         call mpas_pool_get_array(meshPool, 'deltat', deltat)
          call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
          call mpas_pool_get_array(meshPool, 'cellsOnCell', cellsOnCell)
          call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
          call mpas_pool_get_array(geometryPool, 'damage', damage)
+         call mpas_pool_get_array(geometryPool, 'ddamagedt', ddamagedt)
          call mpas_pool_get_array(geometryPool, 'damageMax', damageMax)
          call mpas_pool_get_array(geometryPool, 'damageNye', damageNye)
          call mpas_pool_get_array(velocityPool, 'stiffnessFactor', stiffnessFactor)
@@ -3541,7 +3544,8 @@ module li_calving
         if (config_damage_rheology_coupling) then
             do iCell = 1, nCells
                 if (li_mask_is_floating_ice(cellMask(iCell))) then
-                    stiffnessFactor(iCell) = 1.0_RKIND - damage(iCell)**config_damage_rheology_coupling_exponent
+                    stiffnessFactor(iCell) = stiffnessFactor(iCell) - &
+                                             (ddamagedt(iCell) * deltat)**config_damage_rheology_coupling_exponent
                     if (stiffnessFactor(iCell) < config_damage_stiffness_min) then
                         stiffnessFactor(iCell) = config_damage_stiffness_min
                     end if
