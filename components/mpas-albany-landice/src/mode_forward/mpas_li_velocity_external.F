@@ -459,6 +459,7 @@ contains
       logical, pointer :: config_always_compute_fem_grid
       logical, pointer :: config_output_external_velocity_solver_data
       logical, pointer :: config_nonconvergence_error
+      real (kind=RKIND), pointer :: config_scalar_enhancement_factor
       real (kind=RKIND), pointer :: config_ice_density
       real (kind=RKIND), pointer :: config_effective_pressure_max
       integer, pointer :: anyDynamicVertexMaskChanged
@@ -485,6 +486,7 @@ contains
       call mpas_pool_get_config(liConfigs, 'config_nonconvergence_error', config_nonconvergence_error)
       call mpas_pool_get_config(liConfigs, 'config_ice_density', config_ice_density)
       call mpas_pool_get_config(liConfigs, 'config_effective_pressure_max', config_effective_pressure_max)
+      call mpas_pool_get_config(liConfigs, 'config_scalar_enhancement_factor', config_scalar_enhancement_factor)
 
       ! Mesh variables
       call mpas_pool_get_array(meshPool, 'layerThicknessFractions', layerThicknessFractions)
@@ -596,7 +598,7 @@ contains
 
           call mpas_timer_start("velocity_solver_solve_FO")
           call velocity_solver_solve_FO(bedTopography, lowerSurface, thickness, &
-                betaSolve, sfcMassBal, temperature, stiffnessFactor, &
+                betaSolve, sfcMassBal, temperature, stiffnessFactor*config_scalar_enhancement_factor, &
                 effectivePressureLimited, muFriction, &
                 uReconstructX, uReconstructY,  &  ! Dirichlet boundary values to apply where dirichletVelocityMask=1
                 normalVelocity, drivingStressVert, dissipationVertexField % array, uReconstructX, uReconstructY, &  ! return values

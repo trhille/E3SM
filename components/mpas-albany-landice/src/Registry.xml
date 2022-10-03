@@ -84,6 +84,10 @@
                         description="Selection of the type of simple velocity field computed at initialization when config_velocity_solver = 'simple'.  See mode_forward/mpas_li_velocity_simple.F for details of what the options do."
 		            possible_values="'uniform', 'radial'"
 		/>
+		<nml_option name="config_scalar_enhancement_factor" type="real" default_value="1.0" units="unitless"
+			description="Scalar enhancement factor applied to stiffnessFactor when passed to velocity solver."
+			possible_values="any positive real number"
+		/>
 		<nml_option name="config_use_glp" type="logical" default_value=".true." units="unitless"
 		            description="If true, then apply Albany's grounding line parameterization"
 		            possible_values=".true. or .false."
