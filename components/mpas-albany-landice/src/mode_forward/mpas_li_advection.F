@@ -586,18 +586,22 @@ module li_advection
 
          ! TODO: more complicated treatment at GL?
 
-         do iCell = 1, nCells
-            if (li_mask_is_grounded_ice(cellMask(iCell))) then
-               basalMassBal(iCell) = groundedBasalMassBal(iCell)
-            elseif (li_mask_is_floating_ice(cellMask(iCell))) then
-               ! Currently, floating and grounded ice are mutually exclusive.
-               ! This could change if the GL is parameterized, in which case this logic may need adjustment.
-               basalMassBal(iCell) = floatingBasalMassBal(iCell)
-            elseif ( .not. (li_mask_is_ice(cellMask(iCell)))) then
-               ! We don't allow a positive basal mass balance where ice is not already present.
-               basalMassBal(iCell) = 0.0_RKIND
-            endif
-         enddo
+         where ( groundedMaskForMassBudget .eq. 1 )
+
+            basalMassBal = groundedBasalMassBal
+
+         elsewhere ( floatingMaskForMassBudget .eq. 1)
+
+            ! Currently, floating and grounded ice are mutually exclusive.
+            ! This could change if the GL is parameterized, in which case this logic may need adjustment.
+            basalMassBal = floatingBasalMassBal
+
+         elsewhere ( .not. (li_mask_is_ice(cellMask) ) )
+
+            ! We don't allow a positive basal mass balance where ice is not already present.
+            basalMassBal = 0.0_RKIND
+
+         end where
 
          ! It is possible that excess internal melting was computed and assigned
          ! to the drainedInternalMeltRate array in mpas_li_thermal.F.  If so, then add it to basalMassBal.
