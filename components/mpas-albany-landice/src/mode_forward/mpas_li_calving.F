@@ -1039,6 +1039,7 @@ module li_calving
       real (kind=RKIND), dimension(:), pointer :: calvingThicknessFromThreshold    ! thickness of ice that calves (computed in this subroutine)
       real (kind=RKIND), dimension(:), pointer :: thickness
       integer, dimension(:), pointer :: cellMask
+      integer, dimension(:), pointer :: floatingMaskForMassBudget
 
       err = 0
 
@@ -1053,11 +1054,13 @@ module li_calving
          call mpas_pool_get_array(geometryPool, 'calvingThicknessFromThreshold', calvingThicknessFromThreshold)
          call mpas_pool_get_array(geometryPool, 'thickness', thickness)
          call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
+         call mpas_pool_get_array(geometryPool, 'floatingMaskForMassBudget', floatingMaskForMassBudget)
 
          calvingThickness = 0.0_RKIND
 
-         ! Note: The floating_ice mask includes all floating ice, both inactive and active
-         where (li_mask_is_floating_ice(cellMask))
+         ! Note: The floating_ice mask does not include floating
+         ! non-dynamic cells adjacent to grounded cells.
+         where ( floatingMaskForMassBudget .eq. 1 )
             calvingThickness = thickness * calvingFraction
          endwhere
          calvingThicknessFromThreshold = calvingThickness
