@@ -492,11 +492,11 @@ module li_advection
 
          ! TODO: more complicated treatment at GL?
 
-         where ( li_mask_is_grounded_ice(cellMask) )
+         where ( groundedMaskForMassBudget .eq. 1 )
 
             basalMassBal = groundedBasalMassBal
 
-         elsewhere ( li_mask_is_floating_ice(cellMask) )
+         elsewhere ( floatingMaskForMassBudget .eq. 1)
 
             ! Currently, floating and grounded ice are mutually exclusive.
             ! This could change if the GL is parameterized, in which case this logic may need adjustment.
