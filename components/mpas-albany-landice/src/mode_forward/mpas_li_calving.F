@@ -523,7 +523,7 @@ module li_calving
          calvingThickness = 0.0_RKIND
          restoreThickness = 0.0_RKIND
 
-         allocate(dCalvingThickness(nCellsSolve+1))
+         allocate(dCalvingThickness(nCells+1))
 
          ! loop over locally owned cells
          do iCell = 1, nCells
@@ -3904,7 +3904,7 @@ module li_calving
       where ( (seedMask == 0) .and. li_mask_is_floating_ice(cellMask(:)) .and. li_mask_is_dynamic_ice(cellMask(:)) )
              growMask = 1
       endwhere
-      call flood_fill(seedMask, growMask, domain)
+      call li_flood_fill(seedMask, growMask, domain)
 
       ! Add floating non-dynamic fringe, but exclude dynamic ice isolated by
       ! non-dynamic ice, which can cause velocity solver to fail to converge.
@@ -3916,7 +3916,7 @@ module li_calving
       elsewhere
              growMask = 0
       endwhere
-      call flood_fill(seedMask, growMask, domain)
+      call li_flood_fill(seedMask, growMask, domain)
       
       ! Now remove any ice that was not flood-filled - these are icebergs
       block => domain % blocklist
