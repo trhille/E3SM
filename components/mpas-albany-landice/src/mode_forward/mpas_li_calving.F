@@ -662,7 +662,7 @@ module li_calving
          endif ! if preventing retreat
 
          ! Now check for marine regions that have advanced
-         allocate(dCalvingThickness(nCellsSolve+1))
+         allocate(dCalvingThickness(nCells+1))
 
          ! loop over locally owned cells
          do iCell = 1, nCells

@@ -194,7 +194,6 @@ module li_advection
            basalTracersField        ! scratch field containing values of basal tracers
 
       type (field1DInteger), pointer :: &
-           cellMaskTemporaryField, & ! scratch field containing old values of cellMask
            thermalCellMaskField   
 
       ! Allocatable arrays need for flux-corrected transport advection
@@ -731,7 +730,6 @@ module li_advection
       call mpas_deallocate_scratch_field(layerThicknessOldField, .true.)
       call mpas_deallocate_scratch_field(basalTracersField, .true.)
       call mpas_deallocate_scratch_field(surfaceTracersField, .true.)
-      call mpas_deallocate_scratch_field(cellMaskTemporaryField, .true.)
       call mpas_deallocate_scratch_field(thermalCellMaskField, .true.)
 
       ! === error check
