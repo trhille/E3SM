@@ -4640,9 +4640,9 @@ module li_calving
       call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
 
       where (groundedMaskForMassBudget .eq. 1)
-          groundedCalvingThickness = dCalvingThickness
+          groundedCalvingThickness = groundedCalvingThickness + dCalvingThickness
       elsewhere (floatingMaskForMassBudget .eq. 1)
-          floatingCalvingThickness = dCalvingThickness
+          floatingCalvingThickness = floatingCalvingThickness + dCalvingThickness
       end where
 
       calvingThickness(:) = calvingThickness(:) + dCalvingThickness(:)
