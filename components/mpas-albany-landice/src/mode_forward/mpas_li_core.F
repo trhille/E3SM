@@ -787,7 +787,7 @@ module li_core
       ! initialize damage using stiffnessFactor
       call mpas_pool_get_array(velocityPool, 'stiffnessFactor', stiffnessFactor)
       call mpas_pool_get_array(geometryPool, 'damage', damage)
-      if ( config_initialize_damage_with_stiffnessFactor ) then
+      if ( config_initialize_damage_with_stiffnessFactor .and. (.not. config_do_restart) ) then
          damage(:) = 1.0_RKIND - stiffnessFactor(:)
 
          where ( damage < 0.0_RKIND )
