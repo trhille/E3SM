@@ -3535,6 +3535,11 @@ module li_calving
             err = ior(err, 1)
         endif
 
+        call mpas_timer_start("halo updates")
+        call mpas_dmpar_field_halo_exch(domain, 'damage')
+        call mpas_dmpar_field_halo_exch(domain, 'damageNye')
+        call mpas_timer_stop("halo updates")
+
         if (config_print_calving_info) then
            ! End of routine accounting/reporting
            localMinInfo(1) = minval(damageSource)
@@ -3741,6 +3746,13 @@ module li_calving
         where (damage > 1.0_RKIND)
             damage = 1.0_RKIND
         end where
+
+         ! Halo update for damage before applying to stiffnessFactor
+         ! NOTE: THIS WILL NOT WORK ON MULTIPLE BLOCKS PER PROCESSOR
+         call mpas_timer_start("halo updates")
+         call mpas_dmpar_field_halo_exch(domain, 'damage')
+         call mpas_dmpar_field_halo_exch(domain, 'damageNye')
+         call mpas_timer_stop("halo updates")
 
         if (config_damage_rheology_coupling) then
             do iCell = 1, nCells
