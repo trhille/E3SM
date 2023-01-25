@@ -122,6 +122,27 @@ module li_time_integration_fe
       err = ior(err, err_tmp)
       call mpas_timer_stop("advection prep")
 
+! === Calve ice ========================
+      call mpas_timer_start("calve_ice")
+
+      ! ice calving
+      call li_calve_ice(domain, err_tmp)
+      err = ior(err, err_tmp)
+
+      if (config_restore_calving_front) then
+         ! restore the calving front to its initial position; calving options are ignored
+         call li_restore_calving_front(domain, err_tmp)
+         err = ior(err, err_tmp)
+      endif
+
+      call mpas_timer_stop("calve_ice")
+
+      call mpas_timer_start("halo updates")
+      call mpas_dmpar_field_halo_exch(domain, 'cellMask')
+      call mpas_dmpar_field_halo_exch(domain, 'edgeMask')
+      call mpas_dmpar_field_halo_exch(domain, 'vertexMask')
+      call mpas_timer_stop("halo updates")
+
 !TODO: Determine whether grounded melting should in fact be called first
 ! === Face melting for grounded ice ===========
       call mpas_timer_start("face melting for grounded ice")
@@ -172,27 +193,6 @@ module li_time_integration_fe
       call li_SGH_solve(domain, err_tmp)
       err = ior(err, err_tmp)
       call mpas_timer_stop("subglacial hydro")
-
-! === Calve ice ========================
-      call mpas_timer_start("calve_ice")
-
-      ! ice calving
-      call li_calve_ice(domain, err_tmp)
-      err = ior(err, err_tmp)
-
-      if (config_restore_calving_front) then
-         ! restore the calving front to its initial position; calving options are ignored
-         call li_restore_calving_front(domain, err_tmp)
-         err = ior(err, err_tmp)
-      endif
-
-      call mpas_timer_stop("calve_ice")
-
-      call mpas_timer_start("halo updates")
-      call mpas_dmpar_field_halo_exch(domain, 'cellMask')
-      call mpas_dmpar_field_halo_exch(domain, 'edgeMask')
-      call mpas_dmpar_field_halo_exch(domain, 'vertexMask')
-      call mpas_timer_stop("halo updates")
 
 ! === Update bed topo =====================
 ! It's not clear when the best time to do this is.
