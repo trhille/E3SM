@@ -223,7 +223,6 @@ contains
       real (kind=RKIND), pointer ::  iceThicknessMax, iceThicknessMin, iceThicknessMean
       real (kind=RKIND), pointer ::  totalSfcMassBal, totalBasalMassBal
       real (kind=RKIND), pointer ::  totalGroundedSfcMassBal, totalFloatingSfcMassBal
-      real (kind=RKIND), pointer ::  totalFaceMeltingFlux
       real (kind=RKIND), pointer ::  totalGroundedBasalMassBal, totalFloatingBasalMassBal
       real (kind=RKIND), pointer ::  totalGroundedCalvingFlux, totalFloatingCalvingFlux
       real (kind=RKIND), pointer ::  totalFaceMeltingFlux, &
