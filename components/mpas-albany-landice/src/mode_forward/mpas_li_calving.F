@@ -4165,7 +4165,7 @@ module li_calving
          dCalvingThickness(:) = 0.0_RKIND
 
          ! update mask
-         call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+         call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
 
          localMaskCellCount = 0

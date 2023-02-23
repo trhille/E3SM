@@ -1259,6 +1259,7 @@ is the value of that variable from the *previous* time level!
                 />
                 <var name="calvingThicknessFromThreshold" type="real" dimensions="nCells Time" units="m" time_levs="1"
                         description="thickness of ice that calves on a given timestep for only processes that generate calving based on a threshold.  This includes mask calving, damage calving, iceberg and small island detection, and velocity speed limit."
+                />
                 <var name="groundedCalvingThickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
                         description="thickness of grounded ice that calves on a given timestep (less than or equal to ice thickness)"
                 />
@@ -1347,7 +1348,6 @@ is the value of that variable from the *previous* time level!
                 <var name="damageSource" type="real" dimensions="nCells Time" units="s^{-1}" time_levs="1"
                      description="damage source term"
                 />
-                />
                 <var name="basalWaterThickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
                      description="thickness of basal water"
                 />
@@ -1420,6 +1420,7 @@ is the value of that variable from the *previous* time level!
                 />
                 <var name="dtFaceMeltingCFLratio" type="real" dimensions="Time" units="none" time_levs="1" default_value="0.0"
                         description="ratio of timestep being used to the maximum timestep calculated for the face-melting CFL condition.  This metric can be used to assess the accuracy of the face-melting CFL calculation being lagged by a timestep."
+                />
                 <var name="groundedFaceMeltingThickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
                      description="Equivalent plan-view averaged thickness of grounded ice that melts on a given timestep from front ablation (less than or equal to ice thickness). Used in mass budget calculations."
                 />
