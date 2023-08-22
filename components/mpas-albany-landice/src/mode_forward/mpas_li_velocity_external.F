@@ -449,6 +449,7 @@ contains
          normalVelocity, uReconstructX, uReconstructY, uReconstructZ
       real (kind=RKIND), dimension(:,:), pointer :: temperature
       real (kind=RKIND), dimension(:), pointer :: stiffnessFactor
+      real (kind=RKIND), dimension(:), pointer :: damage
       real (kind=RKIND), dimension(:), pointer :: effectivePressure
       real (kind=RKIND), dimension(:), pointer :: effectivePressureLimited
       real (kind=RKIND), dimension(:), pointer :: muFriction
@@ -461,6 +462,7 @@ contains
       logical, pointer :: config_nonconvergence_error
       real (kind=RKIND), pointer :: config_ice_density
       real (kind=RKIND), pointer :: config_effective_pressure_max
+      real (kind=RKIND), pointer :: config_damage_stiffness_min
       integer, pointer :: anyDynamicVertexMaskChanged
       integer, pointer :: dirichletMaskChanged
       integer, pointer :: nEdges
@@ -485,6 +487,7 @@ contains
       call mpas_pool_get_config(liConfigs, 'config_nonconvergence_error', config_nonconvergence_error)
       call mpas_pool_get_config(liConfigs, 'config_ice_density', config_ice_density)
       call mpas_pool_get_config(liConfigs, 'config_effective_pressure_max', config_effective_pressure_max)
+      call mpas_pool_get_config(liConfigs, 'config_damage_stiffness_min', config_damage_stiffness_min)
 
       ! Mesh variables
       call mpas_pool_get_array(meshPool, 'layerThicknessFractions', layerThicknessFractions)
@@ -502,6 +505,7 @@ contains
       call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
       call mpas_pool_get_array(geometryPool, 'edgeMask', edgeMask)
       call mpas_pool_get_array(geometryPool, 'sfcMassBal', sfcMassBal)
+      call mpas_pool_get_array(geometryPool, 'damage', damage)
 
       ! Thermal variables
       call mpas_pool_get_array(thermalPool, 'temperature', temperature)
@@ -596,7 +600,7 @@ contains
 
           call mpas_timer_start("velocity_solver_solve_FO")
           call velocity_solver_solve_FO(bedTopography, lowerSurface, thickness, &
-                betaSolve, sfcMassBal, temperature, stiffnessFactor, &
+                betaSolve, sfcMassBal, temperature, max(1.0_RKIND - damage, config_damage_stiffness_min) * stiffnessFactor, &
                 effectivePressureLimited, muFriction, &
                 uReconstructX, uReconstructY,  &  ! Dirichlet boundary values to apply where dirichletVelocityMask=1
                 normalVelocity, drivingStressVert, dissipationVertexField % array, uReconstructX, uReconstructY, &  ! return values

@@ -3769,18 +3769,6 @@ module li_calving
             damage = 1.0_RKIND
         end where
 
-        if (config_damage_rheology_coupling) then
-            do iCell = 1, nCells
-                if (li_mask_is_floating_ice(cellMask(iCell))) then
-                    stiffnessFactor(iCell) = 1.0_RKIND - damage(iCell)
-                    if (stiffnessFactor(iCell) < config_damage_stiffness_min) then
-                        stiffnessFactor(iCell) = config_damage_stiffness_min
-                    end if
-                end if
-            end do
-        end if
-
-
         block => block % next
 
       enddo
