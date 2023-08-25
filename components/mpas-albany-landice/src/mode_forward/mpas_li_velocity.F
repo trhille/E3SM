@@ -916,6 +916,7 @@ contains
 
       integer, pointer :: nVertLevels
       integer, pointer :: nCells
+      logical, pointer :: config_damage_rheology_coupling
       real (kind=RKIND), pointer :: config_damage_stiffness_min
 
       integer :: iCell
@@ -929,6 +930,7 @@ contains
 
       call mpas_pool_get_config(liConfigs, 'config_flowLawExponent', config_flowLawExponent)
       call mpas_pool_get_config(liConfigs, 'config_damage_stiffness_min', config_damage_stiffness_min)
+       call mpas_pool_get_config(liConfigs, 'config_damage_rheology_coupling', config_damage_rheology_coupling)
 
       call mpas_pool_get_dimension(meshPool, 'nVertLevels', nVertLevels)
       call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
@@ -988,10 +990,18 @@ contains
          if ( (eEff == 0.0_RKIND) .or. (meanFlowParamA(iCell) == 0.0_RKIND) ) then
             effectiveViscosity(iCell) = 0.0_RKIND
          else
-            effectiveViscosity(iCell) = &
-            0.5_RKIND * max(1.0_RKIND - damage(iCell), config_damage_stiffness_min) * &
-            stiffnessFactor(iCell)*meanFlowParamA(iCell)**(-1.0_RKIND/config_flowLawExponent)* &
-            eEff**((1.0_RKIND-config_flowLawExponent)/config_flowLawExponent)
+            if ( config_damage_rheology_coupling ) then
+               effectiveViscosity(iCell) = &
+               0.5_RKIND * max(1.0_RKIND - damage(iCell), config_damage_stiffness_min) * &
+               stiffnessFactor(iCell)*meanFlowParamA(iCell)**(-1.0_RKIND/config_flowLawExponent)* &
+               eEff**((1.0_RKIND-config_flowLawExponent)/config_flowLawExponent)
+            else
+               effectiveViscosity(iCell) = &
+               0.5_RKIND * stiffnessFactor(iCell)*meanFlowParamA(iCell)** &
+               (-1.0_RKIND/config_flowLawExponent)* &
+               eEff**((1.0_RKIND-config_flowLawExponent)/config_flowLawExponent)
+            endif
+
          endif
       enddo
 
