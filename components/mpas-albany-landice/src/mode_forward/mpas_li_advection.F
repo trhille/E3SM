@@ -170,15 +170,16 @@ module li_advection
 
       real (kind=RKIND), dimension(:,:,:), pointer :: &
            advectedTracers,       & ! values of advected tracers
-           advectedTracersOld       ! old values of advected tracers
-
+           advectedTracersOld, &       ! old values of advected tracers
+           advectedTracersProv
       real (kind=RKIND), dimension(:,:), pointer :: &
            surfaceTracers,        & ! tracer values for new ice at upper surface
            basalTracers             ! tracer values for new ice at lower surface
 
       type (field3DReal), pointer :: &
            advectedTracersField,  & ! scratch field containing values of advected tracers
-           advectedTracersOldField  ! scratch field containing old values of advected tracers
+           advectedTracersOldField, &  ! scratch field containing old values of advected tracers
+           advectedTracersProvField
 
       type (field2DReal), pointer :: &
            layerThicknessOldField   ! scratch field containing old values of layer thickness
@@ -192,7 +193,7 @@ module li_advection
            thermalCellMaskField
 
       ! Allocatable arrays need for flux-corrected transport advection
-      real (kind=RKIND), dimension(:,:,:), allocatable :: tend
+      real (kind=RKIND), dimension(:,:,:), allocatable :: tend, rk2_tend
       real (kind=RKIND), dimension(:,:,:), allocatable :: activeTracerHorizontalAdvectionEdgeFlux
 
       integer, dimension(:), pointer :: &
@@ -246,7 +247,7 @@ module li_advection
       logical, parameter :: circular_shelf_test = .false.
       integer :: nCellsPerRow
       integer :: nRows
-      integer :: i, k, iRow, iCell, iLayer
+      integer :: i, k, iRow, iCell, iLayer, rk_iter
 
       if (circular_shelf_test) then
          nCellsPerRow = 40
@@ -341,6 +342,10 @@ module li_advection
       call mpas_allocate_scratch_field(advectedTracersOldField, .true.)
       advectedTracersOld => advectedTracersOldField % array
 
+      call mpas_pool_get_field(scratchPool, 'workTracerLevelCell3', advectedTracersProvField)
+      call mpas_allocate_scratch_field(advectedTracersProvField, .true.)
+      advectedTracersProv => advectedTracersProvField % array
+
       call mpas_pool_get_field(scratchPool, 'workTracerCell', surfaceTracersField)
       call mpas_allocate_scratch_field(surfaceTracersField, .true.)
       surfaceTracers => surfaceTracersField % array
@@ -413,6 +418,8 @@ module li_advection
              (trim(config_tracer_advection) .eq. 'fct' ) ) then
             allocate(tend(nTracers,nVertLevels,nCells+1))
             tend(:,:,:) = 0.0_RKIND
+            allocate(rk2_tend(nTracers,nVertLevels,nCells+1))
+            rk2_tend(:,:,:) = 0.0_RKIND
             allocate(activeTracerHorizontalAdvectionEdgeFlux(nTracers,nVertLevels+1,nEdges+1))
             activeTracerHorizontalAdvectionEdgeFlux(:,:,:) = 0.0_RKIND
          endif
@@ -486,27 +493,36 @@ module li_advection
                   nTracers, activeTracerHorizontalAdvectionEdgeFlux, computeBudgets=.false.)!{{{
          elseif ((trim(config_thickness_advection) .eq. 'fct') .and. &
                   trim(config_tracer_advection) .eq. 'fct') then
-             ! Call fct routine for thickness first, and use activeTracerHorizontalAdvectionEdgeFlux
-             ! returned by that call as normalThicknessFlux for call to tracer fct
-             call li_tracer_advection_fct_tend(&
-                  tend, advectedTracers, layerThicknessOld * 0.0_RKIND + 1.0_RKIND, &
-                  layerNormalVelocity, 0.0_RKIND * normalVelocity, dt,    &
-                  nTracers, activeTracerHorizontalAdvectionEdgeFlux, computeBudgets=.false.)
-             ! layerThickness is last tracer. However, for some reason
-             ! this: layerThickness(:,:) = advectedTracers(nTracers,:,:) does not conserve mass!
-             ! This does conserve mass:
-             layerThickness(:,:) = layerThickness(:,:) + tend(nTracers,:,:) * dt
-             ! Reset tracers after thickness advection for tracer advection
-             ! TODO: determine whether we need to treat other tracer tendencies
-             ! the same as layerThickness for conservation.
-             advectedTracers(:,:,:) = advectedTracersOld(:,:,:)
-             tend(:,:,:) = 0.0_RKIND
-             ! Call fct for tracers, using activeTracerHorizontalAdvectionEdgeFlux
-             ! from fct thickness advection as normalThicknessFlux
-             call li_tracer_advection_fct_tend(&
-                  tend(1:nTracers-1,:,:), advectedTracers(1:nTracers-1,:,:), layerThicknessOld, &
-                  activeTracerHorizontalAdvectionEdgeFlux(nTracers,:,:), 0.0_RKIND * normalVelocity, dt,    &
-                  nTracers-1, computeBudgets=.false.)
+             do rk_iter = 1,2
+                ! Call fct routine for thickness first, and use activeTracerHorizontalAdvectionEdgeFlux
+                ! returned by that call as normalThicknessFlux for call to tracer fct
+                advectedTracersProv(:,:,:) = advectedTracers(:,:,:)
+                call li_tracer_advection_fct_tend(&
+                     tend, advectedTracers, layerThicknessOld * 0.0_RKIND + 1.0_RKIND, &
+                     layerNormalVelocity, 0.0_RKIND * normalVelocity, dt,    &
+                     nTracers, activeTracerHorizontalAdvectionEdgeFlux, computeBudgets=.false.)
+                ! layerThickness is last tracer. However, for some reason
+                ! this: layerThickness(:,:) = advectedTracers(nTracers,:,:) does not conserve mass!
+                ! This does conserve mass:
+                !layerThickness(:,:) = layerThickness(:,:) + tend(nTracers,:,:) * dt
+                rk2_tend(nTracers,:,:) = rk2_tend(nTracers,:,:) + tend(nTracers,:,:)
+                advectedTracers(nTracers,:,:) = advectedTracersProv(nTracers,:,:) + tend(nTracers,:,:) * dt
+                ! Reset tracers after thickness advection for tracer advection
+                ! TODO: determine whether we need to treat other tracer tendencies
+                ! the same as layerThickness for conservation.
+                advectedTracers(1:nTracers-1,:,:) = advectedTracersProv(1:nTracers-1,:,:)
+                tend(:,:,:) = 0.0_RKIND
+                ! Call fct for tracers, using activeTracerHorizontalAdvectionEdgeFlux
+                ! from fct thickness advection as normalThicknessFlux
+                call li_tracer_advection_fct_tend(&
+                     tend(1:nTracers-1,:,:), advectedTracers(1:nTracers-1,:,:), layerThicknessOld, &
+                     activeTracerHorizontalAdvectionEdgeFlux(nTracers,:,:), 0.0_RKIND * normalVelocity, dt,    &
+                     nTracers-1, computeBudgets=.false.)
+                tend(1:nTracers-1,:,:) = (advectedTracers(1:nTracers-1,:,:) - advectedTracersProv(1:nTracers-1,:,:)) / dt
+                rk2_tend(1:nTracers-1,:,:) = rk2_tend(1:nTracers-1,:,:) + tend(1:nTracers-1,:,:)
+             enddo
+             layerThickness(:,:) = layerThickness(:,:) + rk2_tend(nTracers,:,:) * dt / 2.0_RKIND
+             advectedTracers(1:nTracers-1,:,:) = advectedTracersOld(1:nTracers-1,:,:) + rk2_tend(1:nTracers-1,:,:) * dt / 2.0_RKIND
          elseif ((trim(config_thickness_advection) .eq. 'fct') .and. &
                   trim(config_tracer_advection) .eq. 'fo') then
             err_tmp = 1
@@ -713,12 +729,14 @@ module li_advection
                      advMaskHighOrder, &
                      advMask2ndOrder, &
                      tend, &
+                     rk2_tend, &
                      activeTracerHorizontalAdvectionEdgeFlux)
       endif
 
       ! clean up
       call mpas_deallocate_scratch_field(advectedTracersField, .true.)
       call mpas_deallocate_scratch_field(advectedTracersOldField, .true.)
+       call mpas_deallocate_scratch_field(advectedTracersProvField, .true.)
       call mpas_deallocate_scratch_field(layerThicknessOldField, .true.)
       call mpas_deallocate_scratch_field(basalTracersField, .true.)
       call mpas_deallocate_scratch_field(surfaceTracersField, .true.)
