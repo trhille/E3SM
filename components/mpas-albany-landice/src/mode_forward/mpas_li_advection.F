@@ -193,7 +193,7 @@ module li_advection
            thermalCellMaskField
 
       ! Allocatable arrays need for flux-corrected transport advection
-      real (kind=RKIND), dimension(:,:,:), allocatable :: tend, rk2_tend
+      real (kind=RKIND), dimension(:,:,:), allocatable :: tend, rk4_tend
       real (kind=RKIND), dimension(:,:,:), allocatable :: activeTracerHorizontalAdvectionEdgeFlux
 
       integer, dimension(:), pointer :: &
@@ -248,6 +248,7 @@ module li_advection
       integer :: nCellsPerRow
       integer :: nRows
       integer :: i, k, iRow, iCell, iLayer, rk_iter
+      real (kind=RKIND), dimension(4) :: rk_steps, rk_coeffs
 
       if (circular_shelf_test) then
          nCellsPerRow = 40
@@ -418,8 +419,8 @@ module li_advection
              (trim(config_tracer_advection) .eq. 'fct' ) ) then
             allocate(tend(nTracers,nVertLevels,nCells+1))
             tend(:,:,:) = 0.0_RKIND
-            allocate(rk2_tend(nTracers,nVertLevels,nCells+1))
-            rk2_tend(:,:,:) = 0.0_RKIND
+            allocate(rk4_tend(nTracers,nVertLevels,nCells+1))
+            rk4_tend(:,:,:) = 0.0_RKIND
             allocate(activeTracerHorizontalAdvectionEdgeFlux(nTracers,nVertLevels+1,nEdges+1))
             activeTracerHorizontalAdvectionEdgeFlux(:,:,:) = 0.0_RKIND
          endif
@@ -493,7 +494,16 @@ module li_advection
                   nTracers, activeTracerHorizontalAdvectionEdgeFlux, computeBudgets=.false.)!{{{
          elseif ((trim(config_thickness_advection) .eq. 'fct') .and. &
                   trim(config_tracer_advection) .eq. 'fct') then
-             do rk_iter = 1,2
+             rk_steps(1) = 0.5_RKIND
+             rk_steps(2) = 0.5_RKIND
+             rk_steps(3) = 1.0_RKIND
+             rk_steps(4) = 0.0_RKIND
+
+             rk_coeffs(1) = 1.0_RKIND
+             rk_coeffs(2) = 2.0_RKIND
+             rk_coeffs(3) = 2.0_RKIND
+             rk_coeffs(4) = 1.0_RKIND
+             do rk_iter = 1,4
                 ! Call fct routine for thickness first, and use activeTracerHorizontalAdvectionEdgeFlux
                 ! returned by that call as normalThicknessFlux for call to tracer fct
                 advectedTracersProv(:,:,:) = advectedTracers(:,:,:)
@@ -505,8 +515,8 @@ module li_advection
                 ! this: layerThickness(:,:) = advectedTracers(nTracers,:,:) does not conserve mass!
                 ! This does conserve mass:
                 !layerThickness(:,:) = layerThickness(:,:) + tend(nTracers,:,:) * dt
-                rk2_tend(nTracers,:,:) = rk2_tend(nTracers,:,:) + tend(nTracers,:,:)
-                advectedTracers(nTracers,:,:) = advectedTracersProv(nTracers,:,:) + tend(nTracers,:,:) * dt
+                rk4_tend(nTracers,:,:) = rk4_tend(nTracers,:,:) + tend(nTracers,:,:) * rk_coeffs(rk_iter)
+                advectedTracers(nTracers,:,:) = advectedTracersProv(nTracers,:,:) + tend(nTracers,:,:) * dt * rk_steps(rk_iter)
                 ! Reset tracers after thickness advection for tracer advection
                 ! TODO: determine whether we need to treat other tracer tendencies
                 ! the same as layerThickness for conservation.
@@ -519,10 +529,11 @@ module li_advection
                      activeTracerHorizontalAdvectionEdgeFlux(nTracers,:,:), 0.0_RKIND * normalVelocity, dt,    &
                      nTracers-1, computeBudgets=.false.)
                 tend(1:nTracers-1,:,:) = (advectedTracers(1:nTracers-1,:,:) - advectedTracersProv(1:nTracers-1,:,:)) / dt
-                rk2_tend(1:nTracers-1,:,:) = rk2_tend(1:nTracers-1,:,:) + tend(1:nTracers-1,:,:)
+                rk4_tend(1:nTracers-1,:,:) = rk4_tend(1:nTracers-1,:,:) + tend(1:nTracers-1,:,:) * rk_coeffs(rk_iter)
+                advectedTracers(1:nTracers-1,:,:) = advectedTracersProv(1:nTracers-1,:,:) + tend(1:nTracers-1,:,:) * dt * rk_steps(rk_iter)
              enddo
-             layerThickness(:,:) = layerThickness(:,:) + rk2_tend(nTracers,:,:) * dt / 2.0_RKIND
-             advectedTracers(1:nTracers-1,:,:) = advectedTracersOld(1:nTracers-1,:,:) + rk2_tend(1:nTracers-1,:,:) * dt / 2.0_RKIND
+             layerThickness(:,:) = layerThickness(:,:) + rk4_tend(nTracers,:,:) * dt / 6.0_RKIND
+             advectedTracers(1:nTracers-1,:,:) = advectedTracersOld(1:nTracers-1,:,:) + rk4_tend(1:nTracers-1,:,:) * dt / 6.0_RKIND
          elseif ((trim(config_thickness_advection) .eq. 'fct') .and. &
                   trim(config_tracer_advection) .eq. 'fo') then
             err_tmp = 1
@@ -729,7 +740,7 @@ module li_advection
                      advMaskHighOrder, &
                      advMask2ndOrder, &
                      tend, &
-                     rk2_tend, &
+                     rk4_tend, &
                      activeTracerHorizontalAdvectionEdgeFlux)
       endif
 
