@@ -205,7 +205,8 @@ module li_advection
       real (kind=RKIND), dimension(:), pointer :: dvEdge
 
       character (len=StrKIND), pointer :: &
-           config_thickness_advection   ! method for advecting thickness and tracers
+           config_thickness_advection, &  ! method for advecting thickness and tracers
+           config_basal_mass_bal_float
 
       logical, pointer :: &
            config_print_thickness_advection_info, &  !TODO - change to config_print_advection_info?
@@ -304,6 +305,7 @@ module li_advection
 
       ! get config variables
       call mpas_pool_get_config(liConfigs, 'config_thickness_advection', config_thickness_advection)
+      call mpas_pool_get_config(liConfigs, 'config_basal_mass_bal_float', config_basal_mass_bal_float)
       call mpas_pool_get_config(liConfigs, 'config_print_thickness_advection_info', config_print_thickness_advection_info)
       call mpas_pool_get_config(liConfigs, 'config_print_thermal_info', config_print_thermal_info)
       call mpas_pool_get_config(liConfigs, 'config_thermal_calculate_bmb', config_thermal_calculate_bmb)
@@ -532,14 +534,17 @@ module li_advection
          ! Calculate dynamicThickening (layerThickness is updated by advection at this point, while thickness is still old)
          dynamicThickening = (sum(layerThickness, 1) - thickness) / dt * scyr  ! units of m/yr
 
-
          ! Update the thickness and cellMask before applying the mass balance.
          ! The update is needed because the SMB and BMB depend on whether ice is present.
          thickness = sum(layerThickness, 1)
          call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
 
-
-
+         if (trim(config_basal_mass_bal_float) == 'flux_divergence') then
+            do iCell = 1, nCells
+               floatingBasalMassBal(iCell) = -1.0_RKIND * dynamicThickening(iCell) * config_ice_density / scyr * &
+                                             real(li_mask_is_floating_ice_int(cellMask(iCell)),RKIND)
+            enddo
+         endif
          !-----------------------------------------------------------------
          ! Add the surface and basal mass balance to the layer thickness
          !-----------------------------------------------------------------

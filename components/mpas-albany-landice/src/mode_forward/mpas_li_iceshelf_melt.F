@@ -414,6 +414,9 @@ module li_iceshelf_melt
             elseif (trim(config_basal_mass_bal_float) == 'file') then
                ! Do nothing, handled above
 
+            elseif (trim(config_basal_mass_bal_float) == 'flux_divergence') then
+               ! Do nothing. Handled when dynamicThickening is calculated. 
+
             elseif (trim(config_basal_mass_bal_float) == 'constant') then
 
                ! set melt rate to a constant value for floating ice
