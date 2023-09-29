@@ -3517,11 +3517,10 @@ module li_calving
          ! damage is always larger than the Nye value for initialization of damage evolution.
 
          do iCell = 1, nCells
-            if ((li_mask_is_grounded_ice(cellMask(iCell))) .or. (thickness(iCell) .eq. 0.0_RKIND)) then
+            if ( thickness(iCell) .eq. 0.0_RKIND ) then
                 damage(iCell) = 0.0_RKIND
             end if
          end do
-         ! the damage of grounded ice is kept as 0, as the strain rate calculation is only valid for ice shelf
 
         ! Options for initializing damage where ice goes afloat:
         if (trim(config_damage_gl_setting) == 'extrapolate') then
@@ -3554,7 +3553,7 @@ module li_calving
                 if (li_mask_is_grounding_line(cellMask(iCell))) then
                     do iNeighbor = 1, nEdgesOnCell(iCell)
                         jCell = cellsOnCell(iNeighbor, iCell)
-                        if (li_mask_is_floating_ice(cellMask(jCell))) then
+                        if ( li_mask_is_floating_ice(cellMask(jCell)) .and. (damage(jCell) < damageNye(jCell)) ) then
                             damage(jCell) = damageNye(jCell)
                         end if
                     end do
@@ -3713,7 +3712,7 @@ module li_calving
 
 
          do iCell = 1, nCells
-            if (li_mask_is_grounded_ice(cellMask(iCell)) .or. .not. li_mask_is_ice(cellMask(iCell))) then
+            if (.not. li_mask_is_ice(cellMask(iCell))) then
                 damage(iCell) = 0.0_RKIND
             end if
          end do
@@ -3749,7 +3748,7 @@ module li_calving
                 if (li_mask_is_grounding_line(cellMask(iCell))) then
                     do iNeighbor = 1, nEdgesOnCell(iCell)
                         jCell = cellsOnCell(iNeighbor, iCell)
-                        if (li_mask_is_floating_ice(cellMask(jCell))) then
+                        if ( li_mask_is_floating_ice(cellMask(jCell)) .and. (damage(jCell)<damageNye(jCell)) ) then
                             damage(jCell) = damageNye(jCell)
                         end if
                     end do
