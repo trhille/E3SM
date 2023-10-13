@@ -3645,7 +3645,6 @@ module li_calving
       type (mpas_pool_type), pointer :: meshPool
       type (mpas_pool_type), pointer :: velocityPool
       type (mpas_pool_type), pointer :: scratchPool
-      real(kind=RKIND), pointer :: config_damage_stiffness_min
       logical, pointer :: config_damage_rheology_coupling
       logical, pointer :: config_preserve_damage
       logical, pointer :: config_print_calving_info
@@ -3667,7 +3666,6 @@ module li_calving
       err = 0
 
 
-      call mpas_pool_get_config(liConfigs, 'config_damage_stiffness_min', config_damage_stiffness_min)
       call mpas_pool_get_config(liConfigs, 'config_damage_rheology_coupling', config_damage_rheology_coupling)
       call mpas_pool_get_config(liConfigs, 'config_damage_gl_setting', config_damage_gl_setting)
       call mpas_pool_get_config(liConfigs, 'config_preserve_damage', config_preserve_damage)
