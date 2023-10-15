@@ -3843,11 +3843,11 @@ module li_calving
       growMask(:) = 0
 
       ! define seed and grow masks for flood fill.
-      where ( li_mask_is_dynamic_margin(cellMask) .and. (damage .ge. config_damage_calving_threshold) )
+      where ( li_mask_is_dynamic_margin(cellMask) .and. li_mask_is_floating_ice(cellMask) .and. (damage .ge. config_damage_calving_threshold) )
               seedMask = 1
       end where
 
-      where ( seedMask == 0 .and. (damage .ge. config_damage_calving_threshold) )
+      where ( seedMask == 0 .and. li_mask_is_floating_ice(cellMask) .and. (damage .ge. config_damage_calving_threshold) )
               growMask = 1
       end where
 
