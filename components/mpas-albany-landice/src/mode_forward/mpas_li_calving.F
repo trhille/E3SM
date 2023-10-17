@@ -663,6 +663,7 @@ module li_calving
 
          ! Now check for marine regions that have advanced
          allocate(dCalvingThickness(nCells+1))
+         dCalvingThickness(:) = 0.0_RKIND
 
          ! loop over locally owned cells
          do iCell = 1, nCells
@@ -1147,7 +1148,6 @@ module li_calving
 
       call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
       call mpas_pool_get_dimension(meshPool, 'maxEdges', maxEdges)
-      call mpas_pool_get_array(meshPool, 'cellsOnCell', cellsOnCell)
       call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
       call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
       call mpas_pool_get_array(geometryPool, 'calvingThicknessFromThreshold', calvingThicknessFromThreshold)
@@ -1160,7 +1160,6 @@ module li_calving
 
       allocate(connectedCellsList((maxEdges+1)**2), &
                islandMask(nCells+1))
-      allocate(dCalvingThickness(nCellsSolve+1))
       dCalvingThickness(:) = 0.0_RKIND
       islandMask(:) = 0
       nIslandCellsLocal = 0
