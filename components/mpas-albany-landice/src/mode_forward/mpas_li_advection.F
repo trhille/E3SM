@@ -1052,26 +1052,19 @@ module li_advection
       where ( (groundedMaskForMassBudget .eq. 1) .or. (bedTopography > config_sea_level) )
             groundedSfcMassBalApplied = sfcMassBalApplied
             floatingSfcMassBalApplied = 0.0_RKIND
+            groundedBasalMassBalApplied = basalMassBalApplied
+            floatingBasalMassBalApplied = 0.0_RKIND
       elsewhere (floatingMaskForMassBudget .eq. 1)
             groundedSfcMassBalApplied = 0.0_RKIND
             floatingSfcMassBalApplied = sfcMassBalApplied
+            groundedBasalMassBalApplied = 0.0_RKIND
+            floatingBasalMassBalApplied = basalMassBalApplied
       elsewhere
             groundedSfcMassBalApplied = 0.0_RKIND
             floatingSfcMassBalApplied = 0.0_RKIND
+            groundedBasalMassBalApplied = 0.0_RKIND
+            floatingBasalMassBalApplied = 0.0_RKIND
       end where
-
-      do iCell = 1, nCells
-         if (li_mask_is_grounded_ice(cellMask(iCell))) then
-            groundedBasalMassBalApplied(iCell) = basalMassBalApplied(iCell)
-            floatingBasalMassBalApplied(iCell) = 0.0_RKIND
-         elseif (li_mask_is_floating_ice(cellMask(iCell))) then
-            floatingBasalMassBalApplied(iCell) = basalMassBalApplied(iCell)
-            groundedBasalMassBalApplied(iCell) = 0.0_RKIND
-         else
-            groundedBasalMassBalApplied(iCell) = 0.0_RKIND
-            floatingBasalMassBalApplied(iCell) = 0.0_RKIND
-         endif
-      enddo
 
       deallocate(thckTracerProducts)
 
