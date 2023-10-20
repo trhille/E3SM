@@ -238,15 +238,6 @@ module li_time_integration_fe_rk
       err = ior(err, err_tmp)
       call mpas_timer_stop("advancing clock")
 
-!TODO: Determine whether grounded melting should in fact be called first
-! === Face melting for grounded ice ===========
-      call mpas_timer_start("face melting for grounded ice")
-      call li_face_melt_grounded_ice(domain, err_tmp)
-      err = ior(err, err_tmp)
-      call mpas_timer_stop("face melting for grounded ice")
-
-! *** TODO: Should basal melt rate calculation and column physics go inside RK loop? ***
-
 ! === Basal melting for floating ice ===========
       call mpas_timer_start("basal melting for floating ice")
       call li_basal_melt_floating_ice(domain, err_tmp)
@@ -551,6 +542,13 @@ module li_time_integration_fe_rk
       call mpas_dmpar_field_halo_exch(domain, 'edgeMask')
       call mpas_dmpar_field_halo_exch(domain, 'vertexMask')
       call mpas_timer_stop("halo updates")
+
+!TODO: Determine whether grounded melting should in fact be called first
+! === Face melting for grounded ice ===========
+      call mpas_timer_start("face melting for grounded ice")
+      call li_face_melt_grounded_ice(domain, err_tmp)
+      err = ior(err, err_tmp)
+      call mpas_timer_stop("face melting for grounded ice")
 
 ! === Update bed topo =====================
 ! It's not clear when the best time to do this is.
