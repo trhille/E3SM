@@ -566,6 +566,10 @@ module li_advection
             enddo
          endif
 
+         ! Update halos after advection.
+         call mpas_timer_start("halo updates")
+         call mpas_dmpar_field_halo_exch(domain, 'layerThickness')
+         call mpas_timer_stop("halo updates")
 
          ! Calculate dynamicThickening (layerThickness is updated by advection at this point, while thickness is still old)
          dynamicThickening = (sum(layerThickness, 1) - thickness) / dt * scyr  ! units of m/yr
