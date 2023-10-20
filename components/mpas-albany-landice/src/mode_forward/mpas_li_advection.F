@@ -371,38 +371,45 @@ module li_advection
       ! update masks
       call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
       err = ior(err, err_tmp)
+      ! Update halo on edgeMask for calculating flux across grounding line.
+      call mpas_timer_start("halo updates")
+      call mpas_dmpar_field_halo_exch(domain, 'edgeMask')
+      call mpas_timer_stop("halo updates")
 
-      layerThicknessEdgeFlux(:,:) = 0.0_RKIND
       !-----------------------------------------------------------------
       ! Horizontal transport of thickness and tracers
       !-----------------------------------------------------------------
 
       if ( (trim(config_thickness_advection) .eq. 'fo') .or. &
           (trim(config_thickness_advection) .eq. 'fct') ) then
-
-         ! Calculate flux across grounding line before applying
-         ! sfc/basal mass balance and advection
+         ! Calculate flux across grounding line
+         ! Do this after new thickness & mask have been calculated, including SMB/BMB
          fluxAcrossGroundingLine(:) = 0.0_RKIND
          fluxAcrossGroundingLineOnCells(:) = 0.0_RKIND
          do iEdge = 1, nEdges
-            if (li_mask_is_grounding_line(edgeMask(iEdge))) then 
+            if (li_mask_is_grounding_line(edgeMask(iEdge))) then
                iCell1 = cellsOnEdge(1,iEdge)
                iCell2 = cellsOnEdge(2,iEdge)
-               if (li_mask_is_grounded_ice(cellMask(iCell1))) then 
+               if (li_mask_is_grounded_ice(cellMask(iCell1))) then
                   GLfluxSign = 1.0_RKIND ! edge sign convention is positive from iCell1 to iCell2 on an edge
                   theGroundedCell = iCell1
-               else 
+               else
                   GLfluxSign = -1.0_RKIND
                   theGroundedCell = iCell2
                endif
-               do k = 1, nVertLevels
-                  thicknessFluxEdge = layerNormalVelocity(k,iEdge) * dvEdge(iEdge) * layerThicknessEdge(k,iEdge)
-                  fluxAcrossGroundingLine(iEdge) = fluxAcrossGroundingLine(iEdge) + GLfluxSign * thicknessFluxEdge / dvEdge(iEdge)
-               enddo
+               if (trim(config_thickness_advection) == 'fct') then
+                  do k = 1, nVertLevels
+                     fluxAcrossGroundingLine(iEdge) = fluxAcrossGroundingLine(iEdge) + GLfluxSign * layerThicknessEdgeFlux(k,iEdge)
+                  enddo
+               else
+                  do k = 1, nVertLevels
+                     layerThicknessEdgeFlux(k,iEdge) = layerNormalVelocity(k,iEdge) * layerThicknessEdge(k,iEdge)
+                     fluxAcrossGroundingLine(iEdge) = fluxAcrossGroundingLine(iEdge) + GLfluxSign * layerThicknessEdgeFlux(k,iEdge)
+                  enddo
+               endif
                ! assign to grounded cell in fluxAcrossGroundingLineOnCells
-               if (thickness(theGroundedCell) <= 0.0_RKIND) then 
-                  ! This should never be the case, but checking to avoid
-                  ! possible divide by zero
+               if (thickness(theGroundedCell) <= 0.0_RKIND) then
+                  ! This should never be the case, but checking to avoid possible divide by zero
                   call mpas_log_write("thickness at a grounding line is unexepectedly <=0", MPAS_LOG_ERR)
                   err = ior(err, 1)
                   return
@@ -476,7 +483,7 @@ module li_advection
          ! copy old (input) values of layer thickness and tracers to scratch arrays
          layerThicknessOld(:,:) = layerThickness(:,:)
          advectedTracersOld(:,:,:) = advectedTracers(:,:,:)
-
+         layerThicknessEdgeFlux(:,:) = 0.0_RKIND
          ! compute new values of layer thickness and tracers
          if ((trim(config_thickness_advection) .eq. 'fo') .and. &
              ( (trim(config_tracer_advection) .eq. 'fo') .or. &
