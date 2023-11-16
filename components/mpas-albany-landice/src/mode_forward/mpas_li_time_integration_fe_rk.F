@@ -514,7 +514,7 @@ module li_time_integration_fe_rk
 
 ! Finalize budget updates
       ! Update masks after RK integration
-      call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+      call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
       err = ior(err, err_tmp)
 
       call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
@@ -525,10 +525,6 @@ module li_time_integration_fe_rk
       call mpas_dmpar_field_halo_exch(domain, 'edgeMask')
       call mpas_dmpar_field_halo_exch(domain, 'vertexMask')
       call mpas_timer_stop("halo updates")
-
-      ! Calculate volume converted from grounded to floating
-      ! This needs to be determined after SMB/BMB are applied because those can change floating/grounded state
-      call li_grounded_to_floating(cellMaskPrev, cellMask, thickness, groundedToFloatingThickness, nCells)
 
       sfcMassBalApplied(:) = sfcMassBalAccum(:)
       groundedSfcMassBalApplied(:) = groundedSfcMassBalAccum(:)
@@ -1166,7 +1162,6 @@ module li_time_integration_fe_rk
                  geometryPool,           &
                  thermalPool,            &
                  scratchPool,            &
-                 domain,                 &
                  err_tmp,                &
                  advectTracersIn = .true.)
 
@@ -1186,7 +1181,6 @@ module li_time_integration_fe_rk
                  geometryPool,           &
                  thermalPool,            &
                  scratchPool,            &
-                 domain,                 &
                  err_tmp,                &
                  advectTracersIn = .false.)
 
