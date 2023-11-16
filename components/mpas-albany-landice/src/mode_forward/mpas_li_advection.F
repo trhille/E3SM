@@ -81,7 +81,6 @@ module li_advection
         geometryPool,           &
         thermalPool,            &
         scratchPool,            &
-        domain,                 &
         err,                    &
         advectTracersIn)
 
@@ -110,8 +109,6 @@ module li_advection
       !
       !-----------------------------------------------------------------
       type (domain_type), intent(inout) :: domain  !< Input/Output: domain object
-
-      type (domain_type), intent(inout) :: domain
 
       type (mpas_pool_type), intent(inout) :: &
            velocityPool           !< Input/output: velocity information
