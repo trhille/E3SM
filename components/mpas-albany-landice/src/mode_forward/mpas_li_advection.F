@@ -238,7 +238,7 @@ module li_advection
 
       !WHL - debug
       integer, dimension(:), pointer :: indexToCellID, indexToEdgeID
-      integer, pointer :: nCells, nEdges
+      integer, pointer :: nCells, nEdges, nEdgesSolve
       integer, pointer :: config_stats_cell_ID
       integer :: iEdge, iEdgeOnCell
       integer, dimension(:), pointer :: nEdgesOnCell
@@ -321,6 +321,7 @@ module li_advection
 
       call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
       call mpas_pool_get_dimension(meshPool, 'nEdges', nEdges)
+      call mpas_pool_get_dimension(meshPool, 'nEdgesSolve', nEdgesSolve)
       call mpas_pool_get_dimension(meshPool, 'nVertLevels', nVertLevels)
       call mpas_pool_get_dimension(meshPool, 'maxEdges2', maxEdges2)
       call mpas_pool_get_array(meshPool, 'edgesOnCell', edgesOnCell)
@@ -371,6 +372,7 @@ module li_advection
       ! Update halo on edgeMask for calculating flux across grounding line.
       call mpas_timer_start("halo updates")
       call mpas_dmpar_field_halo_exch(domain, 'edgeMask')
+      call mpas_dmpar_field_halo_exch(domain, 'cellMask')
       call mpas_timer_stop("halo updates")
 
       !-----------------------------------------------------------------
@@ -383,7 +385,7 @@ module li_advection
          ! Do this after new thickness & mask have been calculated, including SMB/BMB
          fluxAcrossGroundingLine(:) = 0.0_RKIND
          fluxAcrossGroundingLineOnCells(:) = 0.0_RKIND
-         do iEdge = 1, nEdges
+         do iEdge = 1, nEdgesSolve
             if (li_mask_is_grounding_line(edgeMask(iEdge))) then
                iCell1 = cellsOnEdge(1,iEdge)
                iCell2 = cellsOnEdge(2,iEdge)
@@ -415,6 +417,11 @@ module li_advection
                        fluxAcrossGroundingLine(iEdge) / thickness(theGroundedCell) * config_ice_density  ! adjust to correct units
             endif
          enddo ! edges
+
+         call mpas_timer_start("halo updates")
+         call mpas_dmpar_field_halo_exch(domain, 'fluxAcrossGroundingLine')
+         call mpas_dmpar_field_halo_exch(domain, 'fluxAcrossGroundingLineOnCells')
+         call mpas_timer_stop("halo updates")
 
          if (config_print_thickness_advection_info) then
             call mpas_log_write('Using first-order upwind for thickness advection')
