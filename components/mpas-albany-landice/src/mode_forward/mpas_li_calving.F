@@ -28,6 +28,7 @@ module li_calving
    use li_setup
    use li_mask
    use li_constants
+   use li_mesh
 
    implicit none
    private
@@ -281,6 +282,11 @@ module li_calving
       elseif (trim(config_calving) == 'von_Mises_stress') then
 
          call von_Mises_calving(domain, err_tmp)
+         err = ior(err, err_tmp)
+
+      elseif (trim(config_calving) == 'crevasse_depth') then
+
+         call crevasse_depth_calving(domain, err_tmp)
          err = ior(err, err_tmp)
 
       elseif (trim(config_calving) == 'specified_calving_velocity') then
@@ -3922,7 +3928,138 @@ module li_calving
 
    end subroutine li_finalize_damage_after_advection
 
+!|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+!
+!    routine crevasse_depth_calving
+!
+!> \brief Calculate calving front position using a crevasse depth criterion
+!> \author Trevor Hillebrand
+!> \date   Jan. 2025
+!> \details This routine calculates a calving front position following the 
+!> crevasse depth model of Nick et al. (2010) and extension to 2D by Pollard
+!> et al. (2015).
+!> 
+!-----------------------------------------------------------------------
+   subroutine crevasse_depth_calving(domain, err)
+      use li_diagnostic_vars
 
+      !-----------------------------------------------------------------
+      ! input/output variables
+      !-----------------------------------------------------------------
+      type (domain_type), intent(inout) :: &
+         domain          !< Input/Output: domain object
+
+      !-----------------------------------------------------------------
+      ! output variables
+      !-----------------------------------------------------------------
+      integer, intent(out) :: err !< Output: error flag
+
+      !-----------------------------------------------------------------
+      ! local variables
+      !-----------------------------------------------------------------
+      type (mpas_pool_type), pointer :: meshPool, geometryPool, &
+                                        velocityPool, scratchPool, &
+                                        thermalPool
+      character (len=StrKIND), pointer :: config_flowParamA_calculation
+      integer :: iCell, err_tmp
+      integer, pointer :: nCells
+      real (kind=RKIND), pointer :: config_ice_density, config_ocean_density
+      real (kind=RKIND), parameter :: freshwater_density = 1000.0_RKIND
+      real (kind=RKIND), dimension(:,:), pointer :: flowParamA, &
+                                                    temperature, &
+                                                    layerThickness
+      real (kind=RKIND), dimension(:), pointer :: thickness, &
+                                                  surfaceCrevasseDepth, &
+                                                  basalCrevasseDepth, &
+                                                  exx, eyy, damage, &
+                                                  bedTopography, &
+                                                  calvingThickness
+      real (kind=RKIND), pointer :: config_flowLawExponent, &
+                                    config_crevasse_water_depth
+      real (kind=RKIND) :: dryCrevasseDepth
+
+      err = 0
+      err_tmp = 0
+
+      call mpas_pool_get_config(liConfigs, 'config_crevasse_water_depth', config_crevasse_water_depth)
+      call mpas_pool_get_config(liConfigs, 'config_flowParamA_calculation', config_flowParamA_calculation)
+      call mpas_pool_get_config(liConfigs, 'config_flowLawExponent', config_flowLawExponent)
+      call mpas_pool_get_config(liConfigs, 'config_ice_density', config_ice_density)
+      call mpas_pool_get_config(liConfigs, 'config_ocean_density', config_ocean_density)
+
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'geometry', geometryPool)
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'velocity', velocityPool)
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'mesh', meshPool)
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'scratch', scratchPool)
+      call mpas_pool_get_subpool(domain % blocklist % structs, 'thermal', thermalPool)
+
+      call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
+      call mpas_pool_get_array(geometryPool, 'thickness', thickness)
+      call mpas_pool_get_array(geometryPool, 'layerThickness', layerThickness)
+      call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
+      call mpas_pool_get_array(geometryPool, 'surfaceCrevasseDepth', surfaceCrevasseDepth)
+      call mpas_pool_get_array(geometryPool, 'basalCrevasseDepth', basalCrevasseDepth)
+      call mpas_pool_get_array(geometryPool, 'damage', damage)
+      call mpas_pool_get_array(velocityPool, 'flowParamA', flowParamA)
+      call mpas_pool_get_array(velocityPool, 'exx', exx)
+      call mpas_pool_get_array(velocityPool, 'eyy', eyy)
+      call mpas_pool_get_array(thermalPool, 'temperature', temperature)
+
+      if (trim(config_flowParamA_calculation) /= "PB1982") then
+         call mpas_log_write("When using crevasse depth calving, config_flowParamA_calculation must be set to 'PB1982'", MPAS_LOG_ERR)
+         err = 1
+         return
+      endif
+      call li_calculate_flowParamA(meshPool, temperature, thickness, flowParamA, err_tmp) ! Get MPAS flowParamA
+      err = ior(err, err_tmp)
+
+      damage(:) = 0.0_RKIND
+
+      do iCell = 1, nCells
+         ! avoid divide-by-zero and only calculate crevasses where divergence > 0
+         if ( (thickness(iCell) > 1.0e-6_RKIND) .and. &
+              ((exx(iCell) + eyy(iCell)) > 1.0e-12_RKIND) .and. &
+              (sum(layerThickness(:,iCell) * flowParamA(:,iCell), dim=1)) > 0.0_RKIND ) then
+            ! Use Pollard et al. (2015) eq B.1a and B.2a to define dry crevasse depth
+            dryCrevasseDepth = &
+                2.0_RKIND / (config_ice_density * gravity) * &
+                ( (exx(iCell) + eyy(iCell)) * thickness(iCell) / &
+                 (sum(layerThickness(:,iCell) * flowParamA(:,iCell), dim=1)) )**(1.0_RKIND / config_flowLawExponent)
+            ! Account for water depth in crevasses, Nick et al. (2010) eq 4.
+            ! Simplify by imposing constraint that water cannot be deeper
+            ! than crevasse depth in this cell at previous time. This likely
+            ! will require a spinup to initialize damage.
+            surfaceCrevasseDepth(iCell) = dryCrevasseDepth + &
+                min(config_crevasse_water_depth, surfaceCrevasseDepth(iCell))
+            ! Use dry crevasse depth to calculate basal crevasse depth,
+            ! after Nick et al. (2010) eq 6
+            basalCrevasseDepth(iCell) = &
+                max(0.0, (dryCrevasseDepth - max(0.0_RKIND, thickness(iCell) + &
+                 config_ocean_density / config_ice_density * bedTopography(iCell)))) * &
+                config_ice_density / (config_ocean_density - config_ice_density)
+            damage(iCell) = min(1.0_RKIND, (surfaceCrevasseDepth(iCell) + &
+                                            basalCrevasseDepth(iCell)) / thickness(iCell))
+         else
+            surfaceCrevasseDepth(iCell) = 0.0_RKIND
+            basalCrevasseDepth(iCell) = 0.0_RKIND
+            damage(iCell) = 0.0_RKIND
+         endif
+      enddo
+
+      call apply_calving_damage_threshold(meshPool, geometryPool, scratchPool, domain, err_tmp)
+      err = ior(err, err_tmp)
+
+      call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
+      call mpas_timer_start("halo updates")
+      call mpas_dmpar_field_halo_exch(domain, 'calvingThickness')
+      call mpas_timer_stop("halo updates")
+      ! === apply calving ===
+      thickness(:) = thickness(:) - calvingThickness(:)
+      ! update mask
+      call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+      err = ior(err, err_tmp)
+
+   end subroutine crevasse_depth_calving
 !|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
 !
 !    routine apply_calving_damage_threshold
@@ -3960,7 +4097,7 @@ module li_calving
       integer, dimension(:), pointer :: seedMask, growMask !masks to pass to flood-fill routine
       real (kind=RKIND), dimension(:), pointer :: calvingThickness !< Output: the applied calving rate as a thickness
       real (kind=RKIND), dimension(:), pointer :: calvingThicknessFromThreshold !< Output: the applied calving thickness from threshold processes
-      real (kind=RKIND), dimension(:), pointer :: thickness, damage
+      real (kind=RKIND), dimension(:), pointer :: thickness, damage, bedTopography
       real(kind=RKIND), pointer :: config_damage_calving_threshold
       integer, dimension(:), pointer :: nEdgesOnCell ! number of cells that border each cell
       integer, dimension(:,:), pointer :: cellsOnCell ! list of cells that neighbor each cell
@@ -3976,6 +4113,7 @@ module li_calving
       call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
       call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
       call mpas_pool_get_array(geometryPool, 'thickness', thickness)
+      call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
       call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
       call mpas_pool_get_array(geometryPool, 'calvingThicknessFromThreshold', calvingThicknessFromThreshold)
       call mpas_pool_get_array(geometryPool, 'damage', damage)
@@ -3993,11 +4131,15 @@ module li_calving
       growMask(:) = 0
 
       ! define seed and grow masks for flood fill.
-      where ( li_mask_is_dynamic_margin(cellMask) .and. (damage .ge. config_damage_calving_threshold) )
+      where ( li_mask_is_dynamic_margin(cellMask) .and. &
+              bedTopography < 0.0 .and. &
+              (damage .ge. config_damage_calving_threshold) )
               seedMask = 1
       end where
 
-      where ( seedMask == 0 .and. (damage .ge. config_damage_calving_threshold) )
+      where ( seedMask == 0 .and. &
+              bedTopography < 0.0 .and. &
+              (damage .ge. config_damage_calving_threshold) )
               growMask = 1
       end where
 
