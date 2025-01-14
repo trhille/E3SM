@@ -3973,10 +3973,11 @@ module li_calving
                                                   basalCrevasseDepth, &
                                                   exx, eyy, damage, &
                                                   bedTopography, &
-                                                  calvingThickness
+                                                  calvingThickness, &
+                                                  sfcMassBalApplied
       real (kind=RKIND), pointer :: config_flowLawExponent, &
                                     config_crevasse_water_depth
-      real (kind=RKIND) :: dryCrevasseDepth
+      real (kind=RKIND) :: dryCrevasseDepth, waterAvailable
 
       err = 0
       err_tmp = 0
@@ -3999,6 +4000,7 @@ module li_calving
       call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
       call mpas_pool_get_array(geometryPool, 'surfaceCrevasseDepth', surfaceCrevasseDepth)
       call mpas_pool_get_array(geometryPool, 'basalCrevasseDepth', basalCrevasseDepth)
+      call mpas_pool_get_array(geometryPool, 'sfcMassBalApplied', sfcMassBalApplied)
       call mpas_pool_get_array(geometryPool, 'damage', damage)
       call mpas_pool_get_array(velocityPool, 'flowParamA', flowParamA)
       call mpas_pool_get_array(velocityPool, 'exx', exx)
@@ -4025,11 +4027,17 @@ module li_calving
                 2.0_RKIND / (config_ice_density * gravity) * &
                 ( (exx(iCell) + eyy(iCell)) * thickness(iCell) / &
                  (sum(layerThickness(:,iCell) * flowParamA(:,iCell), dim=1)) )**(1.0_RKIND / config_flowLawExponent)
+            ! Crevasses can only be water-filled if SMB is negative
+            if (sfcMassBalApplied(iCell) < 0.0_RKIND) then
+               waterAvailable = 1.0_RKIND
+            else
+               waterAvailable = 0.0_RKIND
+            endif
             ! Account for water depth in crevasses, Nick et al. (2010) eq 4.
             ! Simplify by imposing constraint that water cannot be deeper
             ! than crevasse depth in this cell at previous time. This likely
             ! will require a spinup to initialize damage.
-            surfaceCrevasseDepth(iCell) = dryCrevasseDepth + &
+            surfaceCrevasseDepth(iCell) = dryCrevasseDepth + waterAvailable * &
                 min(config_crevasse_water_depth, surfaceCrevasseDepth(iCell))
             ! Use dry crevasse depth to calculate basal crevasse depth,
             ! after Nick et al. (2010) eq 6
