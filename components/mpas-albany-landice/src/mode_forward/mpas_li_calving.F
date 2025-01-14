@@ -4092,31 +4092,39 @@ module li_calving
       !-----------------------------------------------------------------
       ! local variables
       !-----------------------------------------------------------------
+      character (len=StrKIND), pointer :: config_calving
       type (field1dInteger), pointer :: seedMaskField
       type (field1dInteger), pointer :: growMaskField
       integer, dimension(:), pointer :: seedMask, growMask !masks to pass to flood-fill routine
       real (kind=RKIND), dimension(:), pointer :: calvingThickness !< Output: the applied calving rate as a thickness
       real (kind=RKIND), dimension(:), pointer :: calvingThicknessFromThreshold !< Output: the applied calving thickness from threshold processes
-      real (kind=RKIND), dimension(:), pointer :: thickness, damage, bedTopography
+      real (kind=RKIND), dimension(:), pointer :: thickness, damage, &
+                                                  bedTopography, &
+                                                  upperSurface, &
+                                                  surfaceCrevasseDepth
       real(kind=RKIND), pointer :: config_damage_calving_threshold
       integer, dimension(:), pointer :: nEdgesOnCell ! number of cells that border each cell
       integer, dimension(:,:), pointer :: cellsOnCell ! list of cells that neighbor each cell
       integer, dimension(:), pointer :: cellMask
       integer, pointer :: nCells
       integer :: iCell, iNeighbor, jCell
+      logical, dimension(:), allocatable :: calvingFlag ! sets seedMask and growMask acording to which calving scheme is used
 
       err = 0
 
+      call mpas_pool_get_config(liConfigs, 'config_calving', config_calving)
       call mpas_pool_get_config(liConfigs, 'config_damage_calving_threshold', config_damage_calving_threshold)
 
       ! get fields
       call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
       call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
       call mpas_pool_get_array(geometryPool, 'thickness', thickness)
+      call mpas_pool_get_array(geometryPool, 'upperSurface', upperSurface)
       call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
       call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
       call mpas_pool_get_array(geometryPool, 'calvingThicknessFromThreshold', calvingThicknessFromThreshold)
       call mpas_pool_get_array(geometryPool, 'damage', damage)
+      call mpas_pool_get_array(geometryPool, 'surfaceCrevasseDepth', surfaceCrevasseDepth)
       call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
       call mpas_pool_get_array(meshPool, 'cellsOnCell', cellsOnCell)
       ! Allocate scratch fields for flood-fill
@@ -4130,17 +4138,27 @@ module li_calving
       growMask => growMaskField % array
       growMask(:) = 0
 
+      allocate(calvingFlag(nCells+1))
+
       ! define seed and grow masks for flood fill.
-      where ( li_mask_is_dynamic_margin(cellMask) .and. &
-              bedTopography < 0.0 .and. &
-              (damage .ge. config_damage_calving_threshold) )
-              seedMask = 1
+      if (trim(config_calving) == "damagecalving") then
+         calvingFlag = (bedTopography < 0.0 .and. &
+                        (damage .ge. config_damage_calving_threshold))
+      elseif (trim(config_calving) == "crevasse_depth") then
+         calvingFlag = (bedTopography < 0.0 .and. &
+                        ((damage .ge. config_damage_calving_threshold) .or. &
+                        (surfaceCrevasseDepth > upperSurface)))
+      else
+         call mpas_log_write("config_calving must be 'damagecalving' or 'crevasse_depth'", MPAS_LOG_ERR)
+         err = 1
+      endif
+
+      where ( li_mask_is_dynamic_margin(cellMask) .and. calvingFlag )
+         seedMask = 1
       end where
 
-      where ( seedMask == 0 .and. &
-              bedTopography < 0.0 .and. &
-              (damage .ge. config_damage_calving_threshold) )
-              growMask = 1
+      where ( seedMask == 0 .and. calvingFlag )
+         growMask = 1
       end where
 
       call li_flood_fill(seedMask, growMask, domain)
@@ -4166,7 +4184,7 @@ module li_calving
       ! deallocate scratch fields used for flood fill
       call mpas_deallocate_scratch_field(seedMaskField, single_block_in=.true.)
       call mpas_deallocate_scratch_field(growMaskField, single_block_in=.true.)
-
+      deallocate(calvingFlag)
    end subroutine apply_calving_damage_threshold
 
 
