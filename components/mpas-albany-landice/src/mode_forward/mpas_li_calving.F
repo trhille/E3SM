@@ -4038,7 +4038,8 @@ module li_calving
             ! than crevasse depth in this cell at previous time. This likely
             ! will require a spinup to initialize damage.
             surfaceCrevasseDepth(iCell) = dryCrevasseDepth + waterAvailable * &
-                min(config_crevasse_water_depth, surfaceCrevasseDepth(iCell))
+                min(config_crevasse_water_depth, surfaceCrevasseDepth(iCell)) * & 
+                freshwater_density / config_ice_density
             ! Use dry crevasse depth to calculate basal crevasse depth,
             ! after Nick et al. (2010) eq 6
             basalCrevasseDepth(iCell) = &
