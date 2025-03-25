@@ -368,6 +368,9 @@ module li_advection
       call mpas_allocate_scratch_field(groundedMaskForMassBudgetTemporaryField, .true.)
       call mpas_allocate_scratch_field(floatingMaskForMassBudgetTemporaryField, .true.)
 
+      call mpas_pool_get_field(geometryPool, 'cellMaskTemporary', cellMaskTemporaryField)
+      call mpas_allocate_scratch_field(cellMaskTemporaryField, .true.)
+
       call mpas_pool_get_field(geometryPool, 'edgeMaskTemporary', edgeMaskTemporaryField)
       call mpas_allocate_scratch_field(edgeMaskTemporaryField, .true.)
 

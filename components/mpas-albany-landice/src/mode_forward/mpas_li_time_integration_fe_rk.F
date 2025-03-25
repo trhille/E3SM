@@ -87,7 +87,7 @@ module li_time_integration_fe_rk
       use li_velocity
       use li_bedtopo
       use li_mask
-      use li_advection, only: li_grounded_to_floating
+      use li_advection
       use li_ocean_extrap
 
       !-----------------------------------------------------------------
@@ -366,7 +366,7 @@ module li_time_integration_fe_rk
 
       ! Calculate masks prior to RK loop, but do not update masks within the loop
       ! to preserve the accuracy of time integration.
-      call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
+      call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
       err = ior(err, err_tmp)
 
 ! *** Start RK loop ***

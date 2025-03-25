@@ -1119,6 +1119,7 @@ module li_calving
 
       call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
       call mpas_pool_get_dimension(meshPool, 'maxEdges', maxEdges)
+      call mpas_pool_get_array(meshPool, 'cellsOnCell', cellsOnCell)
       call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
       call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
       call mpas_pool_get_array(geometryPool, 'incrementalCalvingThickness', incrementalCalvingThickness)
@@ -1596,8 +1597,7 @@ module li_calving
          call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
 
-         call update_calving_budget(domain)
-         call remove_icebergs(domain)
+         call li_remove_icebergs(domain)
 
          block => block % next
       enddo
@@ -2153,7 +2153,7 @@ module li_calving
           call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
           err = ior(err, err_tmp)
 
-          call remove_icebergs(domain)
+          call li_remove_icebergs(domain)
 
           block => block % next
 
@@ -3481,7 +3481,7 @@ module li_calving
          call li_calculate_mask(meshPool, velocityPool, geometryPool, domain, err_tmp)
          err = ior(err, err_tmp)
 
-         call remove_icebergs(domain)
+         call li_remove_icebergs(domain)
 
          block => block % next
 
@@ -4403,8 +4403,7 @@ module li_calving
       call mpas_log_write("Iceberg-detection flood-fill complete. Removed $i iceberg cells.", intArgs=(/globalIcebergCellCount/))
       call mpas_timer_stop("iceberg detection")
 
-   end subroutine remove_icebergs
->>>>>>> a5bee82292 (Update calving budget incrementally)
+   end subroutine li_remove_icebergs
 
 !|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
 !
