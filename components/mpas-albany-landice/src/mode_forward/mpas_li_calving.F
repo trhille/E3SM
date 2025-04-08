@@ -3935,7 +3935,7 @@ module li_calving
 !> \brief Calculate calving front position using a crevasse depth criterion
 !> \author Trevor Hillebrand
 !> \date   Jan. 2025
-!> \details This routine calculates a calving front position following the 
+!> \details This routine calculates a calving front position following the
 !> crevasse depth model of Nick et al. (2010) and extension to 2D by Pollard
 !> et al. (2015).
 !> 
@@ -3960,7 +3960,8 @@ module li_calving
       type (mpas_pool_type), pointer :: meshPool, geometryPool, &
                                         velocityPool, scratchPool, &
                                         thermalPool
-      character (len=StrKIND), pointer :: config_flowParamA_calculation
+      character (len=StrKIND), pointer :: config_flowParamA_calculation, &
+                                          config_crevasse_water_depth_source
       integer :: iCell, err_tmp
       integer, pointer :: nCells
       real (kind=RKIND), pointer :: config_ice_density, config_ocean_density
@@ -3970,6 +3971,7 @@ module li_calving
                                                     layerThickness
       real (kind=RKIND), dimension(:), pointer :: thickness, &
                                                   surfaceCrevasseDepth, &
+                                                  crevasseWaterDepth, &
                                                   basalCrevasseDepth, &
                                                   exx, eyy, damage, &
                                                   bedTopography, &
@@ -3983,6 +3985,7 @@ module li_calving
       err_tmp = 0
 
       call mpas_pool_get_config(liConfigs, 'config_crevasse_water_depth', config_crevasse_water_depth)
+      call mpas_pool_get_config(liConfigs, 'config_crevasse_water_depth_source', config_crevasse_water_depth_source)
       call mpas_pool_get_config(liConfigs, 'config_flowParamA_calculation', config_flowParamA_calculation)
       call mpas_pool_get_config(liConfigs, 'config_flowLawExponent', config_flowLawExponent)
       call mpas_pool_get_config(liConfigs, 'config_ice_density', config_ice_density)
@@ -3999,6 +4002,7 @@ module li_calving
       call mpas_pool_get_array(geometryPool, 'layerThickness', layerThickness)
       call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
       call mpas_pool_get_array(geometryPool, 'surfaceCrevasseDepth', surfaceCrevasseDepth)
+      call mpas_pool_get_array(geometryPool, 'crevasseWaterDepth', crevasseWaterDepth)
       call mpas_pool_get_array(geometryPool, 'basalCrevasseDepth', basalCrevasseDepth)
       call mpas_pool_get_array(geometryPool, 'sfcMassBalApplied', sfcMassBalApplied)
       call mpas_pool_get_array(geometryPool, 'damage', damage)
@@ -4017,6 +4021,16 @@ module li_calving
 
       damage(:) = 0.0_RKIND
 
+      if (trim(config_crevasse_water_depth_source) == "scalar") then
+         crevasseWaterDepth(:) = config_crevasse_water_depth
+      elseif (trim(config_crevasse_water_depth_source) == "data") then
+         ! Do nothing. This was already retrieved above.
+      else
+         call mpas_log_write("config_crevasse_water_depth_source must be set to either 'scalar' or 'data'.", MPAS_LOG_ERR)
+         err = 1
+         return
+      endif
+
       do iCell = 1, nCells
          ! avoid divide-by-zero and only calculate crevasses where divergence > 0
          if ( (thickness(iCell) > 1.0e-6_RKIND) .and. &
@@ -4034,12 +4048,8 @@ module li_calving
                waterAvailable = 0.0_RKIND
             endif
             ! Account for water depth in crevasses, Nick et al. (2010) eq 4.
-            ! Simplify by imposing constraint that water cannot be deeper
-            ! than crevasse depth in this cell at previous time. This likely
-            ! will require a spinup to initialize damage.
             surfaceCrevasseDepth(iCell) = dryCrevasseDepth + waterAvailable * &
-                min(config_crevasse_water_depth, surfaceCrevasseDepth(iCell)) * & 
-                freshwater_density / config_ice_density
+                crevasseWaterDepth(iCell) * freshwater_density / config_ice_density
             ! Use dry crevasse depth to calculate basal crevasse depth,
             ! after Nick et al. (2010) eq 6
             basalCrevasseDepth(iCell) = &

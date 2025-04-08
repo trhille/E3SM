@@ -280,6 +280,10 @@
                         description="A scalar parameter that specifies a calving rate as proportional to the value of damage above some threshold value when using the 'calving_rate' method for the 'config_damage_calving_method' option (with the threshold damage value specified by 'config_damage_calving_threshold')."
 	                possible_values="any positive real value"
 		/>
+                <nml_option name="config_crevasse_water_depth_source" type="character" default_value="scalar" units="unitless"
+                            description="Source of water depth in crevasses for use with crevasse-depth calving law."
+                            possible_values="'data' (read from input file), 'scalar' (specified by config_crevasse_water_depth)"
+                />
                 <nml_option name="config_crevasse_water_depth" type="real" default_value="0.0" units="m"
                             description="Water depth in crevasses for Nick et al. (2010) crevasse depth calving law."
                             possible_values="any non-negative real value"
@@ -902,6 +906,7 @@
                         <var name="passiveTracer2d"/>
 			<var name="damage"/>
                         <var name="surfaceCrevasseDepth"/>
+                        <var name="crevasseWaterDepth"/>
 			<var name="calvingVelocityData"/>
 			<var name="damageMax"/>
                         <!-- these variables just for ISMIP6 forcing -->
@@ -1361,6 +1366,9 @@ is the value of that variable from the *previous* time level!
                 />
                 <var name="surfaceCrevasseDepth" type="real" dimensions="nCells Time" units="m" time_levs="1"
                      description="depth of surface crevasses based on Nye zero-stress model with optional surface meltwater loading"
+                />
+                <var name="crevasseWaterDepth" type="real" dimensions="nCells Time" units="m" time_levs="1"
+                     description="depth of water in crevasses for use with crevasse-depth calving law."
                 />
                 <var name="basalCrevasseDepth" type="real" dimensions="nCells Time" units="m" time_levs="1"
                      description="depth of basal crevasses based on Nye zero-stress model"
