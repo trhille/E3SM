@@ -3990,13 +3990,14 @@ module li_calving
                                                   surfaceCrevasseDepth, &
                                                   crevasseWaterDepth, &
                                                   basalCrevasseDepth, &
-                                                  exx, eyy, damage, &
+                                                  eMin, eMax, damage, &
                                                   bedTopography, &
                                                   calvingThickness, &
+                                                  calvingMultiplier, &
                                                   sfcMassBalApplied
       real (kind=RKIND), pointer :: config_flowLawExponent, &
                                     config_crevasse_water_depth
-      real (kind=RKIND) :: dryCrevasseDepth, waterAvailable
+      real (kind=RKIND) :: dryCrevasseDepth, waterAvailable, eEff
 
       err = 0
       err_tmp = 0
@@ -4021,11 +4022,12 @@ module li_calving
       call mpas_pool_get_array(geometryPool, 'surfaceCrevasseDepth', surfaceCrevasseDepth)
       call mpas_pool_get_array(geometryPool, 'crevasseWaterDepth', crevasseWaterDepth)
       call mpas_pool_get_array(geometryPool, 'basalCrevasseDepth', basalCrevasseDepth)
+      call mpas_pool_get_array(geometryPool, 'calvingMultiplier', calvingMultiplier)
       call mpas_pool_get_array(geometryPool, 'sfcMassBalApplied', sfcMassBalApplied)
       call mpas_pool_get_array(geometryPool, 'damage', damage)
       call mpas_pool_get_array(velocityPool, 'flowParamA', flowParamA)
-      call mpas_pool_get_array(velocityPool, 'exx', exx)
-      call mpas_pool_get_array(velocityPool, 'eyy', eyy)
+      call mpas_pool_get_array(velocityPool, 'eMax', eMax)
+      call mpas_pool_get_array(velocityPool, 'eMin', eMin)
       call mpas_pool_get_array(thermalPool, 'temperature', temperature)
 
       if (trim(config_flowParamA_calculation) /= "PB1982") then
@@ -4049,14 +4051,18 @@ module li_calving
       endif
 
       do iCell = 1, nCells
+         ! use effective strain rate to determine crevasse depths. Apply calvingMultiplier
+         ! to first principal strain rate eMax, as this is likely to dominate mode I crvasse opening.
+         eEff = sqrt(0.5_RKIND * ( (calvingMultiplier(iCell) * eMax(iCell))**2.0_RKIND + eMin(iCell)**2.0_RKIND - &
+                                   calvingMultiplier(iCell) * eMax(iCell) * eMin(iCell) ))
          ! avoid divide-by-zero and only calculate crevasses where divergence > 0
          if ( (thickness(iCell) > 1.0e-6_RKIND) .and. &
-              ((exx(iCell) + eyy(iCell)) > 1.0e-12_RKIND) .and. &
+              (eEff > 1.0e-12_RKIND) .and. &
               (sum(layerThickness(:,iCell) * flowParamA(:,iCell), dim=1)) > 0.0_RKIND ) then
             ! Use Pollard et al. (2015) eq B.1a and B.2a to define dry crevasse depth
             dryCrevasseDepth = &
                 2.0_RKIND / (config_ice_density * gravity) * &
-                ( (exx(iCell) + eyy(iCell)) * thickness(iCell) / &
+                ( eEff * thickness(iCell) / &
                  (sum(layerThickness(:,iCell) * flowParamA(:,iCell), dim=1)) )**(1.0_RKIND / config_flowLawExponent)
             ! Crevasses can only be water-filled if SMB is negative
             if (sfcMassBalApplied(iCell) < 0.0_RKIND) then
@@ -4182,8 +4188,7 @@ module li_calving
                         (damage .ge. config_damage_calving_threshold))
       elseif (trim(config_calving) == "crevasse_depth") then
          calvingFlag = (bedTopography < 0.0 .and. &
-                        ((damage .ge. config_damage_calving_threshold) .or. &
-                        (surfaceCrevasseDepth > upperSurface)))
+                        damage .ge. config_damage_calving_threshold)
       else
          call mpas_log_write("config_calving must be 'damagecalving' or 'crevasse_depth'", MPAS_LOG_ERR)
          err = 1
