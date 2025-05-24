@@ -267,6 +267,10 @@
                         description="If .true., then turn on the 'calculate_damage' subroutine. Note that setting this to .true. will evolve damage even if damage-based calving is not being used, which is why it is .false. by default (and thus it should explicitly be set to .true. to use damage based calving)."
 		            possible_values=".true. or .false."
                 />
+                <nml_option name="config_advect_damage" type="logical" default_value=".true." units="unitless"
+                        description="If .true., then advect damage with tracers. Should be .true. when using config_calculate_damage, or when coupling to HiDEM."
+                            possible_values=".true. or .false."
+                />
                 <nml_option name="config_damage_preserve_threshold" type="real" default_value="0.0" units="unitless"
                         description="It is a value above which the old damage number would be kept from the impact of advection (the damage would not heal). For example, if the damage at some location is 0.83, and we set config_damage_preserve_threshold to 0.8, then the damage number there will not fall below 0.83. Otherwise, if the damage is 0.7, then it could be decreased to a smaller number if non-damaged ice is transported from upstream. If we set config_damage_preserve_threshold to 0 (default), then it will just not play a role in pratical."
 	                possible_values="real value between 0 and 1"

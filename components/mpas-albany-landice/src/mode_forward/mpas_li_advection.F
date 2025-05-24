@@ -1164,7 +1164,7 @@ module li_advection
            config_thickness_advection
 
       logical, pointer :: &
-           config_calculate_damage
+           config_advect_damage
 
       integer, pointer :: &
            nCells                     ! number of cells
@@ -1221,7 +1221,7 @@ module li_advection
 
       ! get config variables
       call mpas_pool_get_config(liConfigs, 'config_thermal_solver', config_thermal_solver)
-      call mpas_pool_get_config(liConfigs, 'config_calculate_damage', config_calculate_damage)
+      call mpas_pool_get_config(liConfigs, 'config_advect_damage', config_advect_damage)
       call mpas_pool_get_config(liConfigs, 'config_ice_density', config_ice_density)
       call mpas_pool_get_config(liConfigs, 'config_thickness_advection', config_thickness_advection)
 
@@ -1282,7 +1282,7 @@ module li_advection
 
       endif
 
-      if (config_calculate_damage) then
+      if (config_advect_damage) then
 
          ! increment the tracer index
          iTracer = iTracer + 1
@@ -1393,7 +1393,7 @@ module li_advection
            config_thermal_solver
 
       logical, pointer :: &
-           config_calculate_damage
+           config_advect_damage
 
       integer, pointer :: &
            nCellsSolve                ! number of locally owned cells
@@ -1436,7 +1436,7 @@ module li_advection
 
       ! get config variables
       call mpas_pool_get_config(liConfigs, 'config_thermal_solver', config_thermal_solver)
-      call mpas_pool_get_config(liConfigs, 'config_calculate_damage', config_calculate_damage)
+      call mpas_pool_get_config(liConfigs, 'config_advect_damage', config_advect_damage)
 
       iTracer = 0
 
@@ -1469,7 +1469,7 @@ module li_advection
 
       endif
 
-      if (config_calculate_damage) then
+      if (config_advect_damage) then
 
          iTracer = iTracer + 1
 
