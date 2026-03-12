@@ -199,6 +199,7 @@ module li_time_integration_fe_rk
       logical :: useEmbeddedSSPRK, includeThermalForError, includeDamageForError, stepAccepted
       integer :: stepAttempt, maxStepAttempts, embeddedHighOrder
       real (kind=RKIND) :: rkErrorNorm, rkErrorNormGlobal, dtScale
+      real (kind=RKIND), save :: previousEmbeddedAcceptedDt = -1.0_RKIND
 
       err = 0
       err_tmp = 0
@@ -351,12 +352,6 @@ module li_time_integration_fe_rk
       call prepare_advection(domain, err_tmp)
       err = ior(err, err_tmp)
       call mpas_timer_stop("advection prep")
-
-! === Advance the clock before all other physics happen ===========
-      call mpas_timer_start("advancing clock")
-      call advance_clock(domain, err_tmp)
-      err = ior(err, err_tmp)
-      call mpas_timer_stop("advancing clock")
 
 !TODO: Determine whether grounded melting should in fact be called first
 ! === Ocean forcing extrapolation into ice-shelf cavities ===========
@@ -519,6 +514,10 @@ module li_time_integration_fe_rk
       includeDamageForError = .false.
       if (useEmbeddedSSPRK .and. config_calculate_damage) then
          call mpas_log_write('Embedded SSPRK error control excludes damage field to avoid non-smooth limiter dominance.')
+      endif
+
+      if (useEmbeddedSSPRK .and. (previousEmbeddedAcceptedDt > 0.0_RKIND)) then
+         deltatFull = min(deltatFull, previousEmbeddedAcceptedDt * config_embedded_rk_max_growth)
       endif
       maxStepAttempts = 1
       if (useEmbeddedSSPRK) then
@@ -820,6 +819,14 @@ module li_time_integration_fe_rk
          return
       endif
 
+      if (useEmbeddedSSPRK) previousEmbeddedAcceptedDt = deltatFull
+
+      ! Advance model time only once, after this step has been accepted.
+      call mpas_timer_start("advancing clock")
+      call advance_clock(domain, err_tmp)
+      err = ior(err, err_tmp)
+      call mpas_timer_stop("advancing clock")
+
 ! Finalize budget updates
       ! Update masks after RK integration
       call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
@@ -858,7 +865,14 @@ module li_time_integration_fe_rk
       endif
 
 ! Reset time step to full length after RK loop
-      deltat = deltatFull
+   block => domain % blocklist
+   do while (associated(block))
+      call mpas_pool_get_subpool(block % structs, 'mesh', meshPoolTmp)
+      call mpas_pool_get_array(meshPoolTmp, 'deltat', deltatTmp)
+      deltatTmp = deltatFull
+      block => block % next
+   enddo
+   deltat = deltatFull
 
 ! === Update subglacial hydrology  ===========
 ! It's not clear where the best place to call this should be.
@@ -1977,8 +1991,6 @@ module li_time_integration_fe_rk
       type (MPAS_TimeInterval_type) :: timeStepInterval !< the current time step as an interval
       type (MPAS_Time_type) :: simulationStartTime_timeType
 
-      logical, pointer :: config_adaptive_timestep
-
       character (len=StrKIND), pointer :: xtime
       character (len=StrKIND), pointer :: simulationStartTime
       character(len=StrKIND) :: timeStamp !< current time as a string
@@ -1990,24 +2002,19 @@ module li_time_integration_fe_rk
 
       err = 0
 
-      call mpas_pool_get_config(liConfigs, 'config_adaptive_timestep', config_adaptive_timestep)
-
       ! ===
-      ! === Adaptive timestep: update clock information
+      ! === Update clock timestep from mesh deltat
       ! ===
-      ! Set time step in clock object since the time step could have changed
-      ! Need to get value out of a block, but all blocks should have the same value, so just use first block
-      if (config_adaptive_timestep) then
-         block => domain % blocklist
-         call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
-         call mpas_pool_get_array(meshPool, 'deltat', deltat)
-         ! convert dt in seconds to timeInterval type
-         call mpas_set_timeInterval(timeStepInterval, dt=deltat, ierr=err_tmp)
-         err = ior(err,err_tmp)
-         ! update the clock with the timeInterval
-         call mpas_set_clock_timestep(domain % clock, timeStepInterval, err_tmp)
-         err = ior(err,err_tmp)
-      endif
+      ! Need to get value out of a block, but all blocks should have the same value, so just use first block.
+      block => domain % blocklist
+      call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
+      call mpas_pool_get_array(meshPool, 'deltat', deltat)
+      ! convert dt in seconds to timeInterval type
+      call mpas_set_timeInterval(timeStepInterval, dt=deltat, ierr=err_tmp)
+      err = ior(err,err_tmp)
+      ! update the clock with the timeInterval
+      call mpas_set_clock_timestep(domain % clock, timeStepInterval, err_tmp)
+      err = ior(err,err_tmp)
 
       ! ===
       ! === Update clock information
