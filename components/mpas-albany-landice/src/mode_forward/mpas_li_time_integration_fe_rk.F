@@ -367,7 +367,9 @@ module li_time_integration_fe_rk
 
 ! === Face melting for grounded ice ===========
       call mpas_timer_start("face melting for grounded ice")
-      call li_face_melt_grounded_ice(domain, err_tmp)
+      ! Compute face-melt tendencies/CFL diagnostics now, but defer applying
+      ! the thickness update until after RK accepts the timestep.
+      call li_face_melt_grounded_ice(domain, err_tmp, applyFaceMeltNow=.false.)
       err = ior(err, err_tmp)
       call mpas_timer_stop("face melting for grounded ice")
 
@@ -853,6 +855,12 @@ module li_time_integration_fe_rk
          block => block % next
       enddo
       deltat = deltatFull
+
+      ! Apply grounded face melt once, using the accepted timestep.
+      call mpas_timer_start("face melting for grounded ice")
+      call li_face_melt_grounded_ice(domain, err_tmp, computeFaceMeltNow=.false.)
+      err = ior(err, err_tmp)
+      call mpas_timer_stop("face melting for grounded ice")
 
       ! Advance model time only once, after this step has been accepted.
       call mpas_timer_start("advancing clock")
