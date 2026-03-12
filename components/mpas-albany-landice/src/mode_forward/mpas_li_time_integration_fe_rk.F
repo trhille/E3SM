@@ -116,10 +116,19 @@ module li_time_integration_fe_rk
       logical, pointer :: config_calculate_damage
       logical, pointer :: config_finalize_damage_after_advection
       logical, pointer :: config_update_velocity_before_calving
+      logical, pointer :: config_use_embedded_ssprk
       character (len=StrKIND), pointer :: config_thickness_advection, &
                                           config_tracer_advection
       character (len=StrKIND), pointer :: config_thermal_solver
       character (len=StrKIND), pointer :: config_time_integration
+      real (kind=RKIND), pointer :: config_embedded_rk_rtol, &
+                     config_embedded_rk_atol_thickness, &
+                     config_embedded_rk_atol_tracer, &
+                     config_embedded_rk_safety_factor, &
+                     config_embedded_rk_max_growth, &
+                     config_embedded_rk_min_shrink, &
+                     config_min_adaptive_timestep
+      integer, pointer :: config_embedded_rk_max_retries
       integer, pointer :: config_rk_order, config_rk3_stages
       integer :: rkStage, iCell, iTracer, k
       real (kind=RKIND), dimension(:,:), pointer :: layerThickness, &
@@ -149,12 +158,29 @@ module li_time_integration_fe_rk
       integer, dimension(:), allocatable :: cellMaskPrev, edgeMaskPrev, vertexMaskPrev  ! cell mask before advection
       real (kind=RKIND), dimension(:,:), allocatable :: layerThicknessPrev, &
                                                         layerThicknessTmp, &
+                                                        layerThicknessEmbedded, &
+                                                                                    layerThicknessStage1, &
+                                                                                    layerThicknessStage2, &
                                                         temperaturePrev, &
+                                                        temperatureEmbedded, &
+                                                                                    temperatureStage1, &
+                                                                                    temperatureStage2, &
                                                         waterFracPrev, &
+                                                        waterFracEmbedded, &
+                                                                                    waterFracStage1, &
+                                                                                    waterFracStage2, &
                                                         passiveTracer3d, &
                                                         passiveTracer3dPrev, &
                                                         damage3d, &
                                                         damage3dPrev
+      real (kind=RKIND), dimension(:), allocatable :: damagePrev, &
+                                                      passiveTracer2dPrev, &
+                                                      damageEmbedded, &
+                                                                                 passiveTracer2dEmbedded, &
+                                                                                 damageStage1, &
+                                                                                 damageStage2, &
+                                                                                 passiveTracer2dStage1, &
+                                                                                 passiveTracer2dStage2
       integer, pointer :: nVertLevels
       integer, pointer :: nCells, nEdges, nVertices
       integer, pointer :: albanyVelocityError
@@ -167,10 +193,21 @@ module li_time_integration_fe_rk
       real (kind=RKIND), dimension(4) :: rkTendWeights ! Weights used for calculating budget terms
       integer :: nRKstages
       logical :: solveVeloAfterCalving
+      logical :: useEmbeddedSSPRK, includeThermalForError, stepAccepted
+      integer :: stepAttempt, maxStepAttempts, embeddedHighOrder
+      real (kind=RKIND) :: rkErrorNorm, dtScale
 
       err = 0
       err_tmp = 0
       solveVeloAfterCalving = .false.
+      useEmbeddedSSPRK = .false.
+      includeThermalForError = .false.
+      stepAccepted = .false.
+      stepAttempt = 1
+      maxStepAttempts = 1
+      embeddedHighOrder = 3
+      rkErrorNorm = 0.0_RKIND
+      dtScale = 1.0_RKIND
 
       call mpas_pool_get_config(liConfigs, 'config_restore_calving_front', config_restore_calving_front)
       call mpas_pool_get_config(liConfigs, 'config_restore_calving_front_prevent_retreat', config_restore_calving_front_prevent_retreat)
@@ -184,6 +221,15 @@ module li_time_integration_fe_rk
       call mpas_pool_get_config(liConfigs, 'config_time_integration', config_time_integration)
       call mpas_pool_get_config(liConfigs, 'config_ice_density', config_ice_density)
       call mpas_pool_get_config(liConfigs, 'config_update_velocity_before_calving', config_update_velocity_before_calving)
+      call mpas_pool_get_config(liConfigs, 'config_use_embedded_ssprk', config_use_embedded_ssprk)
+      call mpas_pool_get_config(liConfigs, 'config_embedded_rk_rtol', config_embedded_rk_rtol)
+      call mpas_pool_get_config(liConfigs, 'config_embedded_rk_atol_thickness', config_embedded_rk_atol_thickness)
+      call mpas_pool_get_config(liConfigs, 'config_embedded_rk_atol_tracer', config_embedded_rk_atol_tracer)
+      call mpas_pool_get_config(liConfigs, 'config_embedded_rk_safety_factor', config_embedded_rk_safety_factor)
+      call mpas_pool_get_config(liConfigs, 'config_embedded_rk_max_growth', config_embedded_rk_max_growth)
+      call mpas_pool_get_config(liConfigs, 'config_embedded_rk_min_shrink', config_embedded_rk_min_shrink)
+      call mpas_pool_get_config(liConfigs, 'config_embedded_rk_max_retries', config_embedded_rk_max_retries)
+      call mpas_pool_get_config(liConfigs, 'config_min_adaptive_timestep', config_min_adaptive_timestep)
 
       call mpas_pool_get_subpool(domain % blocklist % structs, 'geometry', geometryPool)
       call mpas_pool_get_subpool(domain % blocklist % structs, 'thermal', thermalPool)
@@ -216,13 +262,30 @@ module li_time_integration_fe_rk
       allocate(waterFracPrev(nVertLevels, nCells+1))
       allocate(layerThicknessPrev(nVertLevels, nCells+1))
       allocate(layerThicknessTmp(nVertLevels, nCells+1))
+      allocate(layerThicknessEmbedded(nVertLevels, nCells+1))
+      allocate(layerThicknessStage1(nVertLevels, nCells+1))
+      allocate(layerThicknessStage2(nVertLevels, nCells+1))
       allocate(damage3dPrev(nVertLevels, nCells+1))
       allocate(damage3d(nVertLevels, nCells+1))
       allocate(passiveTracer3dPrev(nVertLevels, nCells+1))
       allocate(passiveTracer3d(nVertLevels, nCells+1))
+      allocate(temperatureEmbedded(nVertLevels, nCells+1))
+      allocate(waterFracEmbedded(nVertLevels, nCells+1))
+      allocate(temperatureStage1(nVertLevels, nCells+1))
+      allocate(temperatureStage2(nVertLevels, nCells+1))
+      allocate(waterFracStage1(nVertLevels, nCells+1))
+      allocate(waterFracStage2(nVertLevels, nCells+1))
       allocate(cellMaskPrev(nCells+1))
       allocate(edgeMaskPrev(nEdges+1))
       allocate(vertexMaskPrev(nVertices+1))
+      allocate(damagePrev(nCells+1))
+      allocate(passiveTracer2dPrev(nCells+1))
+      allocate(damageEmbedded(nCells+1))
+      allocate(passiveTracer2dEmbedded(nCells+1))
+      allocate(damageStage1(nCells+1))
+      allocate(damageStage2(nCells+1))
+      allocate(passiveTracer2dStage1(nCells+1))
+      allocate(passiveTracer2dStage2(nCells+1))
 
       allocate(sfcMassBalAccum(nCells+1))
       allocate(basalMassBalAccum(nCells+1))
@@ -237,6 +300,9 @@ module li_time_integration_fe_rk
       waterFracPrev(:,:) = 0.0_RKIND
       layerThicknessPrev(:,:) = 0.0_RKIND
       layerThicknessTmp(:,:) = 0.0_RKIND
+      layerThicknessEmbedded(:,:) = 0.0_RKIND
+      layerThicknessStage1(:,:) = 0.0_RKIND
+      layerThicknessStage2(:,:) = 0.0_RKIND
       damage3dPrev(:,:) = 0.0_RKIND
       damage3d(:,:) = 0.0_RKIND
       passiveTracer3dPrev(:,:) = 0.0_RKIND
@@ -244,6 +310,20 @@ module li_time_integration_fe_rk
       edgeMaskPrev(:) = 0
       vertexMaskPrev(:) = 0
       passiveTracer3d(:,:) = 0.0_RKIND
+      temperatureEmbedded(:,:) = 0.0_RKIND
+      waterFracEmbedded(:,:) = 0.0_RKIND
+      temperatureStage1(:,:) = 0.0_RKIND
+      temperatureStage2(:,:) = 0.0_RKIND
+      waterFracStage1(:,:) = 0.0_RKIND
+      waterFracStage2(:,:) = 0.0_RKIND
+      damagePrev(:) = 0.0_RKIND
+      passiveTracer2dPrev(:) = 0.0_RKIND
+      damageEmbedded(:) = 0.0_RKIND
+      passiveTracer2dEmbedded(:) = 0.0_RKIND
+      damageStage1(:) = 0.0_RKIND
+      damageStage2(:) = 0.0_RKIND
+      passiveTracer2dStage1(:) = 0.0_RKIND
+      passiveTracer2dStage2(:) = 0.0_RKIND
 
       sfcMassBalAccum(:) = 0.0_RKIND
       basalMassBalAccum(:) = 0.0_RKIND
@@ -311,6 +391,8 @@ module li_time_integration_fe_rk
       cellMaskPrev(:) = cellMask(:)
       edgeMaskPrev(:) = edgeMask(:)
       vertexMaskPrev(:) = vertexMask(:)
+      damagePrev(:) = damage(:)
+      passiveTracer2dPrev(:) = passiveTracer2d(:)
       do k = 1, nVertLevels
          damage3dPrev(k,:) = damage(:)
          passiveTracer3dPrev(k,:) = passiveTracer2d(:)
@@ -403,155 +485,313 @@ module li_time_integration_fe_rk
       ! to preserve the accuracy of time integration.
       call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
       err = ior(err, err_tmp)
+      useEmbeddedSSPRK = config_use_embedded_ssprk
+      if (useEmbeddedSSPRK) then
+         if (.not. ((trim(config_time_integration) == 'runge_kutta') .and. &
+                    ((config_rk_order == 2) .or. (config_rk_order == 3)))) then
+            err = 1
+            call mpas_log_write('Embedded SSPRK currently supports only runge_kutta with config_rk_order=2 or 3', &
+                                messageType=MPAS_LOG_ERR)
+            return
+         endif
+         if ((config_rk_order == 3) .and. (config_rk3_stages /= 3 .and. config_rk3_stages /= 4)) then
+            err = 1
+            call mpas_log_write('Embedded SSPRK currently supports config_rk3_stages = 3 or 4', &
+                                messageType=MPAS_LOG_ERR)
+            return
+         endif
+      endif
+
+      embeddedHighOrder = config_rk_order
+
+      includeThermalForError = trim(config_thermal_solver) .ne. 'none'
+      maxStepAttempts = 1
+      if (useEmbeddedSSPRK) then
+         maxStepAttempts = max(1, config_embedded_rk_max_retries + 1)
+      endif
+
+      stepAccepted = .false.
+      do stepAttempt = 1, maxStepAttempts
+         ! Reset prognostic state to pre-RK values before each attempt.
+         layerThickness(:,:) = layerThicknessPrev(:,:)
+         thickness(:) = sum(layerThickness, 1)
+         temperature(:,:) = temperaturePrev(:,:)
+         waterFrac(:,:) = waterFracPrev(:,:)
+         damage(:) = damagePrev(:)
+         passiveTracer2d(:) = passiveTracer2dPrev(:)
+         cellMask(:) = cellMaskPrev(:)
+         edgeMask(:) = edgeMaskPrev(:)
+         vertexMask(:) = vertexMaskPrev(:)
+
+         sfcMassBalAccum(:) = 0.0_RKIND
+         basalMassBalAccum(:) = 0.0_RKIND
+         groundedSfcMassBalAccum(:) = 0.0_RKIND
+         groundedBasalMassBalAccum(:) = 0.0_RKIND
+         floatingBasalMassBalAccum(:) = 0.0_RKIND
+         fluxAcrossGroundingLineAccum(:) = 0.0_RKIND
+         fluxAcrossGroundingLineOnCellsAccum(:) = 0.0_RKIND
+         calvingThicknessAccum(:) = 0.0_RKIND
+         calvingThickness(:) = 0.0_RKIND
+         calvingThicknessFromThreshold(:) = 0.0_RKIND
+         calvingVelocity(:) = 0.0_RKIND
+
+         if (useEmbeddedSSPRK) then
+            layerThicknessEmbedded(:,:) = layerThicknessPrev(:,:)
+            temperatureEmbedded(:,:) = temperaturePrev(:,:)
+            waterFracEmbedded(:,:) = waterFracPrev(:,:)
+            damageEmbedded(:) = damagePrev(:)
+            passiveTracer2dEmbedded(:) = passiveTracer2dPrev(:)
+         endif
 
 ! *** Start RK loop ***
-      do rkStage = 1, nRKstages
-         call mpas_log_write('beginning rk stage $i of $i', &
-                             intArgs=(/rkStage, nRKstages/))
-         deltat = deltatFull * rkSubstepWeights(rkStage)
+         do rkStage = 1, nRKstages
+            call mpas_log_write('beginning rk stage $i of $i', &
+                                intArgs=(/rkStage, nRKstages/))
+            deltat = deltatFull * rkSubstepWeights(rkStage)
 
-         ! === calculate damage ===========
-         if (config_calculate_damage) then
-             call mpas_timer_start("damage")
-             call li_calculate_damage(domain, err_tmp)
-             err = ior(err, err_tmp)
-             call mpas_timer_stop("damage")
-         endif
-
-         ! === Compute new state for prognostic variables ===
-         call mpas_timer_start("advect thickness and tracers")
-         call advection_solver(domain, err_tmp)
-         err = ior(err, err_tmp)
-         call mpas_timer_stop("advect thickness and tracers")
-
-         ! If using SSP RK, then update thickness and tracers incrementally.
-         ! For first RK stage, thickness and tracer updates above are sufficient.
-         ! Likewise, for the 4-stage SSP RK3 the last stage is just a forward euler update.
-         if ( (rkStage > 1) .and. (rkStage < 4) )  then
-            call mpas_pool_get_array(geometryPool, 'thickness', thickness)
-            call mpas_pool_get_array(geometryPool, 'layerThickness', layerThickness)
-            call mpas_pool_get_array(geometryPool, 'passiveTracer2d', passiveTracer2d)
-            call mpas_pool_get_array(geometryPool, 'damage', damage)
-
-            call mpas_pool_get_array(thermalPool, 'temperature', temperature)
-            call mpas_pool_get_array(thermalPool, 'waterFrac', waterFrac)
-
-            layerThicknessTmp(:,:) = layerThickness(:,:)
-            layerThickness(:,:) = rkSSPweights(rkStage) * layerThicknessPrev(:,:) + &
-                                     (1.0_RKIND - rkSSPweights(rkStage)) * layerThickness(:,:)
-            thickness = sum(layerThickness, 1)
-            ! Do not calculate masks after updating thickness! We need to keep masks
-            ! constant for now to preserve accuracy of time integration
-
-            if (trim(config_thermal_solver) .ne. 'none') then
-               do iCell = 1, nCells
-                  do k = 1, nVertLevels
-                     if (layerThickness(k,iCell) > 0.0_RKIND) then
-                        temperature(k,iCell) = ( rkSSPweights(rkStage) * temperaturePrev(k,iCell) * layerThicknessPrev(k,iCell) + &
-                                             (1.0_RKIND - rkSSPweights(rkStage)) * temperature(k,iCell) * &
-                                             layerThicknessTmp(k,iCell) ) / layerThickness(k,iCell)
-                        waterFrac(k,iCell) = ( rkSSPweights(rkStage) * waterFracPrev(k,iCell) * layerThicknessPrev(k,iCell) + &
-                                             (1.0_RKIND - rkSSPweights(rkStage)) * waterFrac(k,iCell) * &
-                                             layerThicknessTmp(k,iCell) ) / layerThickness(k,iCell)
-                     endif
-                  enddo
-               enddo
-            endif
-
+            ! === calculate damage ===========
             if (config_calculate_damage) then
+                call mpas_timer_start("damage")
+                call li_calculate_damage(domain, err_tmp)
+                err = ior(err, err_tmp)
+                call mpas_timer_stop("damage")
+            endif
+
+            ! === Compute new state for prognostic variables ===
+            call mpas_timer_start("advect thickness and tracers")
+            call advection_solver(domain, err_tmp)
+            err = ior(err, err_tmp)
+            call mpas_timer_stop("advect thickness and tracers")
+
+            ! If using SSP RK, then update thickness and tracers incrementally.
+            ! For first RK stage, thickness and tracer updates above are sufficient.
+            ! Likewise, for the 4-stage SSP RK3 the last stage is just a forward euler update.
+            if ( (rkStage > 1) .and. (rkStage < 4) )  then
+               call mpas_pool_get_array(geometryPool, 'thickness', thickness)
+               call mpas_pool_get_array(geometryPool, 'layerThickness', layerThickness)
+               call mpas_pool_get_array(geometryPool, 'passiveTracer2d', passiveTracer2d)
+               call mpas_pool_get_array(geometryPool, 'damage', damage)
+
+               call mpas_pool_get_array(thermalPool, 'temperature', temperature)
+               call mpas_pool_get_array(thermalPool, 'waterFrac', waterFrac)
+
+               layerThicknessTmp(:,:) = layerThickness(:,:)
+               layerThickness(:,:) = rkSSPweights(rkStage) * layerThicknessPrev(:,:) + &
+                                        (1.0_RKIND - rkSSPweights(rkStage)) * layerThickness(:,:)
+               thickness = sum(layerThickness, 1)
+               ! Do not calculate masks after updating thickness! We need to keep masks
+               ! constant for now to preserve accuracy of time integration
+
+               if (trim(config_thermal_solver) .ne. 'none') then
+                  do iCell = 1, nCells
+                     do k = 1, nVertLevels
+                        if (layerThickness(k,iCell) > 0.0_RKIND) then
+                           temperature(k,iCell) = ( rkSSPweights(rkStage) * temperaturePrev(k,iCell) * layerThicknessPrev(k,iCell) + &
+                                                (1.0_RKIND - rkSSPweights(rkStage)) * temperature(k,iCell) * &
+                                                layerThicknessTmp(k,iCell) ) / layerThickness(k,iCell)
+                           waterFrac(k,iCell) = ( rkSSPweights(rkStage) * waterFracPrev(k,iCell) * layerThicknessPrev(k,iCell) + &
+                                                (1.0_RKIND - rkSSPweights(rkStage)) * waterFrac(k,iCell) * &
+                                                layerThicknessTmp(k,iCell) ) / layerThickness(k,iCell)
+                        endif
+                     enddo
+                  enddo
+               endif
+
+               if (config_calculate_damage) then
+                  do iCell = 1, nCells
+                     do k = 1, nVertLevels
+                        if (layerThickness(k,iCell) > 0.0_RKIND) then
+                           damage3d(k,iCell) = ( rkSSPweights(rkStage) * damage3dPrev(k,iCell) * layerThicknessPrev(k,iCell) + &
+                                                 (1.0_RKIND - rkSSPweights(rkStage)) * damage(iCell) * &
+                                                 layerThicknessTmp(k,iCell) ) / layerThickness(k,iCell)
+                        else
+                           damage3d(k,iCell) = 0.0_RKIND
+                        endif
+                     enddo
+                     damage(iCell) = sum(damage3d(:, iCell) * layerThicknessFractions)
+                  enddo
+               endif
+
                do iCell = 1, nCells
                   do k = 1, nVertLevels
                      if (layerThickness(k,iCell) > 0.0_RKIND) then
-                        damage3d(k,iCell) = ( rkSSPweights(rkStage) * damage3dPrev(k,iCell) * layerThicknessPrev(k,iCell) + &
-                                              (1.0_RKIND - rkSSPweights(rkStage)) * damage(iCell) * &
-                                              layerThicknessTmp(k,iCell) ) / layerThickness(k,iCell)
+                        passiveTracer3d(k,iCell) = ( rkSSPweights(rkStage) * passiveTracer3dPrev(k,iCell) * layerThicknessPrev(k,iCell) + &
+                                                     (1.0_RKIND - rkSSPweights(rkStage)) * passiveTracer2d(iCell) * &
+                                                     layerThicknessTmp(k,iCell) ) / layerThickness(k,iCell)
                      else
-                        damage3d(k,iCell) = 0.0_RKIND
+                        passiveTracer3d(k,iCell) = 0.0_RKIND
                      endif
                   enddo
-                  damage(iCell) = sum(damage3d(:, iCell) * layerThicknessFractions)
+                  passiveTracer2d(iCell) = sum(passiveTracer3d(:,iCell) * layerThicknessFractions)
                enddo
+
+            endif
+          
+            ! === Ensure damage is within bounds before velocity solve ===
+            if ( config_finalize_damage_after_advection ) then
+                call mpas_timer_start("finalize damage")
+                call li_finalize_damage_after_advection(domain, err_tmp)
+                err = ior(err, err_tmp)
+                call mpas_timer_stop("finalize damage")
             endif
 
-            do iCell = 1, nCells
-               do k = 1, nVertLevels
-                  if (layerThickness(k,iCell) > 0.0_RKIND) then
-                     passiveTracer3d(k,iCell) = ( rkSSPweights(rkStage) * passiveTracer3dPrev(k,iCell) * layerThicknessPrev(k,iCell) + &
-                                                  (1.0_RKIND - rkSSPweights(rkStage)) * passiveTracer2d(iCell) * &
-                                                  layerThicknessTmp(k,iCell) ) / layerThickness(k,iCell)
-                  else
-                     passiveTracer3d(k,iCell) = 0.0_RKIND
+            call mpas_pool_get_array(geometryPool, 'sfcMassBalApplied', sfcMassBalApplied)
+            call mpas_pool_get_array(geometryPool, 'groundedSfcMassBalApplied', groundedSfcMassBalApplied)
+            call mpas_pool_get_array(geometryPool, 'basalMassBalApplied', basalMassBalApplied)
+            call mpas_pool_get_array(geometryPool, 'floatingBasalMassBalApplied', floatingBasalMassBalApplied)
+            call mpas_pool_get_array(geometryPool, 'groundedBasalMassBalApplied', groundedBasalMassBalApplied)
+            call mpas_pooL_get_array(velocityPool, 'fluxAcrossGroundingLine', fluxAcrossGroundingLine)
+            call mpas_pooL_get_array(velocityPool, 'fluxAcrossGroundingLineOnCells', fluxAcrossGroundingLineOnCells)
+            call mpas_pool_get_array(geometryPool, 'thickness', thickness)
+
+            ! update budgets
+            sfcMassBalAccum = sfcMassBalAccum + rkTendWeights(rkStage) * sfcMassBalApplied
+            groundedSfcMassBalAccum = groundedSfcMassBalAccum + rkTendWeights(rkStage) * groundedSfcMassBalApplied
+            basalMassBalAccum = basalMassBalAccum + rkTendWeights(rkStage) * basalMassBalApplied
+            groundedBasalMassBalAccum = groundedBasalMassBalAccum + rkTendWeights(rkStage) * groundedBasalMassBalApplied
+            floatingBasalMassBalAccum = floatingBasalMassBalAccum + rkTendWeights(rkStage) * floatingBasalMassBalApplied
+            fluxAcrossGroundingLineAccum = fluxAcrossGroundingLineAccum + rkTendWeights(rkStage) * fluxAcrossGroundingLine
+            fluxAcrossGroundingLineOnCellsAccum = fluxAcrossGroundingLineOnCellsAccum + rkTendWeights(rkStage) * fluxAcrossGroundingLineOnCells
+
+            ! Halo updates
+            call mpas_timer_start("halo updates")
+
+            call mpas_dmpar_field_halo_exch(domain, 'thickness')
+            call mpas_dmpar_field_halo_exch(domain, 'temperature')
+            call mpas_dmpar_field_halo_exch(domain, 'waterFrac')
+            call mpas_dmpar_field_halo_exch(domain, 'damage')
+            call mpas_dmpar_field_halo_exch(domain, 'passiveTracer2d')
+
+            call mpas_timer_stop("halo updates")
+
+            if (useEmbeddedSSPRK) then
+               if (rkStage == 1) then
+                  layerThicknessStage1(:,:) = layerThickness(:,:)
+                  if (includeThermalForError) then
+                     temperatureStage1(:,:) = temperature(:,:)
+                     waterFracStage1(:,:) = waterFrac(:,:)
                   endif
-               enddo
-               passiveTracer2d(iCell) = sum(passiveTracer3d(:,iCell) * layerThicknessFractions)
-            enddo
-
-         endif
-       
-         ! === Ensure damage is within bounds before velocity solve ===
-         if ( config_finalize_damage_after_advection ) then
-             call mpas_timer_start("finalize damage")
-             call li_finalize_damage_after_advection(domain, err_tmp)
-             err = ior(err, err_tmp)
-             call mpas_timer_stop("finalize damage")
-         endif
-
-         call mpas_pool_get_array(geometryPool, 'sfcMassBalApplied', sfcMassBalApplied)
-         call mpas_pool_get_array(geometryPool, 'groundedSfcMassBalApplied', groundedSfcMassBalApplied)
-         call mpas_pool_get_array(geometryPool, 'basalMassBalApplied', basalMassBalApplied)
-         call mpas_pool_get_array(geometryPool, 'floatingBasalMassBalApplied', floatingBasalMassBalApplied)
-         call mpas_pool_get_array(geometryPool, 'groundedBasalMassBalApplied', groundedBasalMassBalApplied)
-         call mpas_pooL_get_array(velocityPool, 'fluxAcrossGroundingLine', fluxAcrossGroundingLine)
-         call mpas_pooL_get_array(velocityPool, 'fluxAcrossGroundingLineOnCells', fluxAcrossGroundingLineOnCells)
-         call mpas_pool_get_array(geometryPool, 'thickness', thickness)
-
-         ! update budgets
-         sfcMassBalAccum = sfcMassBalAccum + rkTendWeights(rkStage) * sfcMassBalApplied
-         groundedSfcMassBalAccum = groundedSfcMassBalAccum + rkTendWeights(rkStage) * groundedSfcMassBalApplied
-         basalMassBalAccum = basalMassBalAccum + rkTendWeights(rkStage) * basalMassBalApplied
-         groundedBasalMassBalAccum = groundedBasalMassBalAccum + rkTendWeights(rkStage) * groundedBasalMassBalApplied
-         floatingBasalMassBalAccum = floatingBasalMassBalAccum + rkTendWeights(rkStage) * floatingBasalMassBalApplied
-         fluxAcrossGroundingLineAccum = fluxAcrossGroundingLineAccum + rkTendWeights(rkStage) * fluxAcrossGroundingLine
-         fluxAcrossGroundingLineOnCellsAccum = fluxAcrossGroundingLineOnCellsAccum + rkTendWeights(rkStage) * fluxAcrossGroundingLineOnCells
-
-         ! Halo updates
-         call mpas_timer_start("halo updates")
-
-         call mpas_dmpar_field_halo_exch(domain, 'thickness')
-         call mpas_dmpar_field_halo_exch(domain, 'temperature')
-         call mpas_dmpar_field_halo_exch(domain, 'waterFrac')
-         call mpas_dmpar_field_halo_exch(domain, 'damage')
-         call mpas_dmpar_field_halo_exch(domain, 'passiveTracer2d')
-
-         call mpas_timer_stop("halo updates")
-
-         ! Update velocity for each RK step
-         ! === Solve Velocity =====================
-         if ( config_update_velocity_before_calving .or. ( (.not. config_update_velocity_before_calving) &
-              .and. (rkStage < nRKstages) ) ) then
-
-            if (config_restore_calving_front) then
-               ! restore the calving front to its initial position before velocity solve.
-               call li_restore_calving_front(domain, err_tmp)
-               err = ior(err, err_tmp)
-               call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
-               calvingThicknessAccum = calvingThicknessAccum + rkTendWeights(rkStage) * calvingThickness
+                  damageStage1(:) = damage(:)
+                  passiveTracer2dStage1(:) = passiveTracer2d(:)
+               elseif (rkStage == 2) then
+                  layerThicknessStage2(:,:) = layerThickness(:,:)
+                  if (includeThermalForError) then
+                     temperatureStage2(:,:) = temperature(:,:)
+                     waterFracStage2(:,:) = waterFrac(:,:)
+                  endif
+                  damageStage2(:) = damage(:)
+                  passiveTracer2dStage2(:) = passiveTracer2d(:)
+               endif
             endif
-            ! We need to remove icebergs between RK stages because the
-            ! main calving routine is not called until after the RK loop.
-            ! This frequently results in icebergs that causes intermediate
-            ! RK stage velocity solves to fail.
-            call li_remove_icebergs(domain)
-            call mpas_log_write('Resetting masks')
 
-            cellMask(:) = cellMaskPrev(:)
-            edgeMask(:) = edgeMaskPrev(:)
-            vertexMask(:) = vertexMaskPrev(:)
-            call li_velocity_solve(domain, solveVelo=.true., updateMask=.false., err=err_tmp)
-            err = ior(err, err_tmp)
-         endif
+            ! Update velocity for each RK step
+            ! === Solve Velocity =====================
+            if ( config_update_velocity_before_calving .or. ( (.not. config_update_velocity_before_calving) &
+                 .and. (rkStage < nRKstages) ) ) then
+
+               if (config_restore_calving_front) then
+                  ! restore the calving front to its initial position before velocity solve.
+                  call li_restore_calving_front(domain, err_tmp)
+                  err = ior(err, err_tmp)
+                  call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
+                  calvingThicknessAccum = calvingThicknessAccum + rkTendWeights(rkStage) * calvingThickness
+               endif
+               ! We need to remove icebergs between RK stages because the
+               ! main calving routine is not called until after the RK loop.
+               ! This frequently results in icebergs that causes intermediate
+               ! RK stage velocity solves to fail.
+               call li_remove_icebergs(domain)
+               call mpas_log_write('Resetting masks')
+
+               cellMask(:) = cellMaskPrev(:)
+               edgeMask(:) = edgeMaskPrev(:)
+               vertexMask(:) = vertexMaskPrev(:)
+               call li_velocity_solve(domain, solveVelo=.true., updateMask=.false., err=err_tmp)
+               err = ior(err, err_tmp)
+            endif
 ! *** end RK loop ***
+         enddo
+
+         if (.not. useEmbeddedSSPRK) then
+            stepAccepted = .true.
+            exit
+         endif
+
+         if (config_rk_order == 2) then
+            ! SSPRK2(2,2) with embedded RK1 uses stage-1 Forward Euler endpoint.
+            layerThicknessEmbedded(:,:) = layerThicknessStage1(:,:)
+            if (includeThermalForError) then
+               temperatureEmbedded(:,:) = temperatureStage1(:,:)
+               waterFracEmbedded(:,:) = waterFracStage1(:,:)
+            endif
+            damageEmbedded(:) = damageStage1(:)
+            passiveTracer2dEmbedded(:) = passiveTracer2dStage1(:)
+         elseif (config_rk3_stages == 3) then
+            ! SSPRK3(3,3) embedded RK2: y* = y0 + h/2*(k1+k2) = 2*y_stage2 - y0.
+            layerThicknessEmbedded(:,:) = 2.0_RKIND * layerThicknessStage2(:,:) - layerThicknessPrev(:,:)
+            if (includeThermalForError) then
+               temperatureEmbedded(:,:) = 2.0_RKIND * temperatureStage2(:,:) - temperaturePrev(:,:)
+               waterFracEmbedded(:,:) = 2.0_RKIND * waterFracStage2(:,:) - waterFracPrev(:,:)
+            endif
+            damageEmbedded(:) = 2.0_RKIND * damageStage2(:) - damagePrev(:)
+            passiveTracer2dEmbedded(:) = 2.0_RKIND * passiveTracer2dStage2(:) - passiveTracer2dPrev(:)
+         else
+            ! SSPRK3(4,3) embedded RK2 midpoint: y* = y0 + h*k2 = y0 + 2*(y_stage2 - y_stage1).
+            layerThicknessEmbedded(:,:) = layerThicknessPrev(:,:) + &
+                                          2.0_RKIND * (layerThicknessStage2(:,:) - layerThicknessStage1(:,:))
+            if (includeThermalForError) then
+               temperatureEmbedded(:,:) = temperaturePrev(:,:) + &
+                                          2.0_RKIND * (temperatureStage2(:,:) - temperatureStage1(:,:))
+               waterFracEmbedded(:,:) = waterFracPrev(:,:) + &
+                                        2.0_RKIND * (waterFracStage2(:,:) - waterFracStage1(:,:))
+            endif
+            damageEmbedded(:) = damagePrev(:) + 2.0_RKIND * (damageStage2(:) - damageStage1(:))
+            passiveTracer2dEmbedded(:) = passiveTracer2dPrev(:) + &
+                                         2.0_RKIND * (passiveTracer2dStage2(:) - passiveTracer2dStage1(:))
+         endif
+
+         call li_embedded_ssprk_error_norm(layerThickness, layerThicknessEmbedded, temperature, temperatureEmbedded, &
+                                           waterFrac, waterFracEmbedded, passiveTracer2d, passiveTracer2dEmbedded, &
+                                           damage, damageEmbedded, nVertLevels, nCells, includeThermalForError, &
+                                           config_calculate_damage, config_embedded_rk_rtol, &
+                                           config_embedded_rk_atol_thickness, config_embedded_rk_atol_tracer, rkErrorNorm)
+
+         if (rkErrorNorm <= 1.0_RKIND) then
+            stepAccepted = .true.
+            call mpas_log_write('Embedded SSPRK accepted attempt $i with normalized error $r', &
+                                intArgs=(/stepAttempt/), realArgs=(/rkErrorNorm/))
+            exit
+         endif
+
+         if (stepAttempt == maxStepAttempts) then
+            err = 1
+            call mpas_log_write('Embedded SSPRK failed to satisfy tolerance after $i attempts (error=$r)', &
+                                intArgs=(/maxStepAttempts/), realArgs=(/rkErrorNorm/), &
+                                messageType=MPAS_LOG_ERR)
+            return
+         endif
+
+         dtScale = config_embedded_rk_safety_factor * rkErrorNorm ** (-1.0_RKIND / real(embeddedHighOrder, RKIND))
+         dtScale = min(config_embedded_rk_max_growth, dtScale)
+         dtScale = max(config_embedded_rk_min_shrink, dtScale)
+         deltatFull = deltatFull * dtScale
+
+         if (deltatFull < config_min_adaptive_timestep) then
+            err = 1
+            call mpas_log_write('Embedded SSPRK requested deltat below config_min_adaptive_timestep', &
+                                messageType=MPAS_LOG_ERR)
+            return
+         endif
+
+         call mpas_log_write('Embedded SSPRK rejected attempt $i; reducing deltat by factor $r to $r seconds', &
+                             intArgs=(/stepAttempt/), realArgs=(/dtScale, deltatFull/))
       enddo
+
+      if (.not. stepAccepted) then
+         err = 1
+         call mpas_log_write('Embedded SSPRK did not accept a step', messageType=MPAS_LOG_ERR)
+         return
+      endif
 
 ! Finalize budget updates
       ! Update masks after RK integration
@@ -658,13 +898,30 @@ module li_time_integration_fe_rk
       deallocate(waterFracPrev)
       deallocate(layerThicknessPrev)
       deallocate(layerThicknessTmp)
+      deallocate(layerThicknessEmbedded)
+      deallocate(layerThicknessStage1)
+      deallocate(layerThicknessStage2)
       deallocate(damage3dPrev)
       deallocate(damage3d)
       deallocate(passiveTracer3dPrev)
       deallocate(passiveTracer3d)
+      deallocate(temperatureEmbedded)
+      deallocate(waterFracEmbedded)
+      deallocate(temperatureStage1)
+      deallocate(temperatureStage2)
+      deallocate(waterFracStage1)
+      deallocate(waterFracStage2)
       deallocate(cellMaskPrev)
       deallocate(edgeMaskPrev)
       deallocate(vertexMaskPrev)
+      deallocate(damagePrev)
+      deallocate(passiveTracer2dPrev)
+      deallocate(damageEmbedded)
+      deallocate(passiveTracer2dEmbedded)
+      deallocate(damageStage1)
+      deallocate(damageStage2)
+      deallocate(passiveTracer2dStage1)
+      deallocate(passiveTracer2dStage2)
       deallocate(sfcMassBalAccum)
       deallocate(basalMassBalAccum)
       deallocate(groundedSfcMassBalAccum)
@@ -1572,6 +1829,78 @@ module li_time_integration_fe_rk
 
    !--------------------------------------------------------------------
    end subroutine calculate_layerThicknessEdge
+
+!***********************************************************************
+!
+!  routine li_embedded_ssprk_error_norm
+!
+!> \brief   Compute normalized error estimate for embedded SSPRK control
+!> \details
+!>  Uses the current RK endpoint and a formally reconstructed embedded
+!>  lower-order endpoint to compute a max-norm over thickness and
+!>  tracer-like fields.
+!-----------------------------------------------------------------------
+   subroutine li_embedded_ssprk_error_norm(layerThickness, layerThicknessEmbedded, temperature, temperatureEmbedded, &
+                                           waterFrac, waterFracEmbedded, passiveTracer2d, passiveTracer2dEmbedded, &
+                                           damage, damageEmbedded, nVertLevels, nCells, includeThermal, includeDamage, &
+                                           relTol, absTolThickness, absTolTracer, errorNorm)
+
+      real (kind=RKIND), dimension(:,:), intent(in) :: layerThickness, layerThicknessEmbedded
+      real (kind=RKIND), dimension(:,:), intent(in) :: temperature, temperatureEmbedded
+      real (kind=RKIND), dimension(:,:), intent(in) :: waterFrac, waterFracEmbedded
+      real (kind=RKIND), dimension(:), intent(in) :: passiveTracer2d, passiveTracer2dEmbedded
+      real (kind=RKIND), dimension(:), intent(in) :: damage, damageEmbedded
+      integer, intent(in) :: nVertLevels, nCells
+      logical, intent(in) :: includeThermal, includeDamage
+      real (kind=RKIND), intent(in) :: relTol, absTolThickness, absTolTracer
+      real (kind=RKIND), intent(out) :: errorNorm
+
+      integer :: iCell, k
+      real (kind=RKIND) :: yPrimary, yEmbedded, scaleVal, thisErr
+
+      errorNorm = 0.0_RKIND
+
+      do iCell = 1, nCells
+         yPrimary = sum(layerThickness(:, iCell))
+         yEmbedded = sum(layerThicknessEmbedded(:, iCell))
+         scaleVal = absTolThickness + relTol * max(abs(yPrimary), abs(yEmbedded))
+         if (scaleVal > 0.0_RKIND) then
+            thisErr = abs(yPrimary - yEmbedded) / scaleVal
+            errorNorm = max(errorNorm, thisErr)
+         endif
+
+         scaleVal = absTolTracer + relTol * max(abs(passiveTracer2d(iCell)), abs(passiveTracer2dEmbedded(iCell)))
+         if (scaleVal > 0.0_RKIND) then
+            thisErr = abs(passiveTracer2d(iCell) - passiveTracer2dEmbedded(iCell)) / scaleVal
+            errorNorm = max(errorNorm, thisErr)
+         endif
+
+         if (includeDamage) then
+            scaleVal = absTolTracer + relTol * max(abs(damage(iCell)), abs(damageEmbedded(iCell)))
+            if (scaleVal > 0.0_RKIND) then
+               thisErr = abs(damage(iCell) - damageEmbedded(iCell)) / scaleVal
+               errorNorm = max(errorNorm, thisErr)
+            endif
+         endif
+
+         if (includeThermal) then
+            do k = 1, nVertLevels
+               scaleVal = absTolTracer + relTol * max(abs(temperature(k,iCell)), abs(temperatureEmbedded(k,iCell)))
+               if (scaleVal > 0.0_RKIND) then
+                  thisErr = abs(temperature(k,iCell) - temperatureEmbedded(k,iCell)) / scaleVal
+                  errorNorm = max(errorNorm, thisErr)
+               endif
+
+               scaleVal = absTolTracer + relTol * max(abs(waterFrac(k,iCell)), abs(waterFracEmbedded(k,iCell)))
+               if (scaleVal > 0.0_RKIND) then
+                  thisErr = abs(waterFrac(k,iCell) - waterFracEmbedded(k,iCell)) / scaleVal
+                  errorNorm = max(errorNorm, thisErr)
+               endif
+            enddo
+         endif
+      enddo
+
+   end subroutine li_embedded_ssprk_error_norm
 
 !***********************************************************************
 !
