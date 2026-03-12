@@ -198,7 +198,8 @@ module li_time_integration_fe_rk
       logical :: solveVeloAfterCalving
       logical :: useEmbeddedSSPRK, includeThermalForError, includeDamageForError, stepAccepted
       integer :: stepAttempt, maxStepAttempts, embeddedHighOrder
-      real (kind=RKIND) :: rkErrorNorm, rkErrorNormGlobal, dtScale
+      integer :: rkErrorCountLocal, rkErrorCountGlobal
+      real (kind=RKIND) :: rkErrorNorm, rkErrorNormGlobal, rkErrorSumSqLocal, rkErrorSumSqGlobal, dtScale
       real (kind=RKIND), save :: previousEmbeddedAcceptedDt = -1.0_RKIND
 
       err = 0
@@ -213,6 +214,10 @@ module li_time_integration_fe_rk
       embeddedHighOrder = 3
       rkErrorNorm = 0.0_RKIND
       rkErrorNormGlobal = 0.0_RKIND
+      rkErrorCountLocal = 0
+      rkErrorCountGlobal = 0
+      rkErrorSumSqLocal = 0.0_RKIND
+      rkErrorSumSqGlobal = 0.0_RKIND
       dtScale = 1.0_RKIND
 
       call mpas_pool_get_config(liConfigs, 'config_restore_calving_front', config_restore_calving_front)
@@ -777,9 +782,17 @@ module li_time_integration_fe_rk
                                            waterFrac, waterFracEmbedded, passiveTracer2d, passiveTracer2dEmbedded, &
                                            damage, damageEmbedded, nVertLevels, nCells, includeThermalForError, &
                                            includeDamageForError, config_embedded_rk_rtol, &
-                                           config_embedded_rk_atol_thickness, config_embedded_rk_atol_tracer, rkErrorNorm)
+                                           config_embedded_rk_atol_thickness, config_embedded_rk_atol_tracer, &
+                                           rkErrorNorm, rkErrorCountLocal)
 
-         call mpas_dmpar_max_real(domain % dminfo, rkErrorNorm, rkErrorNormGlobal)
+         rkErrorSumSqLocal = rkErrorNorm * rkErrorNorm * real(rkErrorCountLocal, RKIND)
+         call mpas_dmpar_sum_real(domain % dminfo, rkErrorSumSqLocal, rkErrorSumSqGlobal)
+         call mpas_dmpar_sum_int(domain % dminfo, rkErrorCountLocal, rkErrorCountGlobal)
+         if (rkErrorCountGlobal > 0) then
+            rkErrorNormGlobal = sqrt(rkErrorSumSqGlobal / real(rkErrorCountGlobal, RKIND))
+         else
+            rkErrorNormGlobal = 0.0_RKIND
+         endif
          rkErrorNorm = rkErrorNormGlobal
 
          if (rkErrorNorm <= 1.0_RKIND) then
@@ -1889,13 +1902,13 @@ module li_time_integration_fe_rk
 !> \brief   Compute normalized error estimate for embedded SSPRK control
 !> \details
 !>  Uses the current RK endpoint and a formally reconstructed embedded
-!>  lower-order endpoint to compute a max-norm over thickness and
-!>  tracer-like fields.
+!>  lower-order endpoint to compute an RMSE-like normalized error over
+!>  thickness and tracer-like fields.
 !-----------------------------------------------------------------------
    subroutine li_embedded_ssprk_error_norm(layerThickness, layerThicknessEmbedded, temperature, temperatureEmbedded, &
                                            waterFrac, waterFracEmbedded, passiveTracer2d, passiveTracer2dEmbedded, &
                                            damage, damageEmbedded, nVertLevels, nCells, includeThermal, includeDamage, &
-                                           relTol, absTolThickness, absTolTracer, errorNorm)
+                                           relTol, absTolThickness, absTolTracer, errorNorm, errorCount)
 
       real (kind=RKIND), dimension(:,:), intent(in) :: layerThickness, layerThicknessEmbedded
       real (kind=RKIND), dimension(:,:), intent(in) :: temperature, temperatureEmbedded
@@ -1906,12 +1919,15 @@ module li_time_integration_fe_rk
       logical, intent(in) :: includeThermal, includeDamage
       real (kind=RKIND), intent(in) :: relTol, absTolThickness, absTolTracer
       real (kind=RKIND), intent(out) :: errorNorm
+      integer, intent(out) :: errorCount
 
       integer :: iCell, k
-      real (kind=RKIND) :: yPrimary, yEmbedded, scaleVal, thisErr
+      real (kind=RKIND) :: yPrimary, yEmbedded, scaleVal, thisErr, errorSumSq
       real (kind=RKIND), parameter :: minIceForError = 1.0e-12_RKIND
 
       errorNorm = 0.0_RKIND
+      errorCount = 0
+      errorSumSq = 0.0_RKIND
 
       do iCell = 1, nCells
          yPrimary = sum(layerThickness(:, iCell))
@@ -1919,7 +1935,8 @@ module li_time_integration_fe_rk
          scaleVal = absTolThickness + relTol * max(abs(yPrimary), abs(yEmbedded))
          if (scaleVal > 0.0_RKIND) then
             thisErr = abs(yPrimary - yEmbedded) / scaleVal
-            errorNorm = max(errorNorm, thisErr)
+            errorSumSq = errorSumSq + thisErr * thisErr
+            errorCount = errorCount + 1
          endif
 
          if (max(yPrimary, yEmbedded) <= minIceForError) then
@@ -1929,14 +1946,16 @@ module li_time_integration_fe_rk
          scaleVal = absTolTracer + relTol * max(abs(passiveTracer2d(iCell)), abs(passiveTracer2dEmbedded(iCell)))
          if (scaleVal > 0.0_RKIND) then
             thisErr = abs(passiveTracer2d(iCell) - passiveTracer2dEmbedded(iCell)) / scaleVal
-            errorNorm = max(errorNorm, thisErr)
+            errorSumSq = errorSumSq + thisErr * thisErr
+            errorCount = errorCount + 1
          endif
 
          if (includeDamage) then
             scaleVal = absTolTracer + relTol * max(abs(damage(iCell)), abs(damageEmbedded(iCell)))
             if (scaleVal > 0.0_RKIND) then
                thisErr = abs(damage(iCell) - damageEmbedded(iCell)) / scaleVal
-               errorNorm = max(errorNorm, thisErr)
+               errorSumSq = errorSumSq + thisErr * thisErr
+               errorCount = errorCount + 1
             endif
          endif
 
@@ -1946,17 +1965,25 @@ module li_time_integration_fe_rk
                scaleVal = absTolTracer + relTol * max(abs(temperature(k,iCell)), abs(temperatureEmbedded(k,iCell)))
                if (scaleVal > 0.0_RKIND) then
                   thisErr = abs(temperature(k,iCell) - temperatureEmbedded(k,iCell)) / scaleVal
-                  errorNorm = max(errorNorm, thisErr)
+                  errorSumSq = errorSumSq + thisErr * thisErr
+                  errorCount = errorCount + 1
                endif
 
                scaleVal = absTolTracer + relTol * max(abs(waterFrac(k,iCell)), abs(waterFracEmbedded(k,iCell)))
                if (scaleVal > 0.0_RKIND) then
                   thisErr = abs(waterFrac(k,iCell) - waterFracEmbedded(k,iCell)) / scaleVal
-                  errorNorm = max(errorNorm, thisErr)
+                  errorSumSq = errorSumSq + thisErr * thisErr
+                  errorCount = errorCount + 1
                endif
             enddo
          endif
       enddo
+
+      if (errorCount > 0) then
+         errorNorm = sqrt(errorSumSq / real(errorCount, RKIND))
+      else
+         errorNorm = 0.0_RKIND
+      endif
 
    end subroutine li_embedded_ssprk_error_norm
 
