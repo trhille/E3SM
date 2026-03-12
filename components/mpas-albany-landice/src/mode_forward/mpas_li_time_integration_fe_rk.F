@@ -196,7 +196,7 @@ module li_time_integration_fe_rk
       real (kind=RKIND), dimension(4) :: rkTendWeights ! Weights used for calculating budget terms
       integer :: nRKstages
       logical :: solveVeloAfterCalving
-      logical :: useEmbeddedSSPRK, includeThermalForError, stepAccepted
+      logical :: useEmbeddedSSPRK, includeThermalForError, includeDamageForError, stepAccepted
       integer :: stepAttempt, maxStepAttempts, embeddedHighOrder
       real (kind=RKIND) :: rkErrorNorm, rkErrorNormGlobal, dtScale
 
@@ -205,6 +205,7 @@ module li_time_integration_fe_rk
       solveVeloAfterCalving = .false.
       useEmbeddedSSPRK = .false.
       includeThermalForError = .false.
+      includeDamageForError = .false.
       stepAccepted = .false.
       stepAttempt = 1
       maxStepAttempts = 1
@@ -515,6 +516,10 @@ module li_time_integration_fe_rk
       embeddedHighOrder = config_rk_order
 
       includeThermalForError = trim(config_thermal_solver) .ne. 'none'
+      includeDamageForError = .false.
+      if (useEmbeddedSSPRK .and. config_calculate_damage) then
+         call mpas_log_write('Embedded SSPRK error control excludes damage field to avoid non-smooth limiter dominance.')
+      endif
       maxStepAttempts = 1
       if (useEmbeddedSSPRK) then
          maxStepAttempts = max(1, config_embedded_rk_max_retries + 1)
@@ -772,7 +777,7 @@ module li_time_integration_fe_rk
          call li_embedded_ssprk_error_norm(layerThickness, layerThicknessEmbedded, temperature, temperatureEmbedded, &
                                            waterFrac, waterFracEmbedded, passiveTracer2d, passiveTracer2dEmbedded, &
                                            damage, damageEmbedded, nVertLevels, nCells, includeThermalForError, &
-                                           config_calculate_damage, config_embedded_rk_rtol, &
+                                           includeDamageForError, config_embedded_rk_rtol, &
                                            config_embedded_rk_atol_thickness, config_embedded_rk_atol_tracer, rkErrorNorm)
 
          call mpas_dmpar_max_real(domain % dminfo, rkErrorNorm, rkErrorNormGlobal)
@@ -1879,6 +1884,7 @@ module li_time_integration_fe_rk
 
       integer :: iCell, k
       real (kind=RKIND) :: yPrimary, yEmbedded, scaleVal, thisErr
+      real (kind=RKIND), parameter :: minIceForError = 1.0e-12_RKIND
 
       errorNorm = 0.0_RKIND
 
@@ -1889,6 +1895,10 @@ module li_time_integration_fe_rk
          if (scaleVal > 0.0_RKIND) then
             thisErr = abs(yPrimary - yEmbedded) / scaleVal
             errorNorm = max(errorNorm, thisErr)
+         endif
+
+         if (max(yPrimary, yEmbedded) <= minIceForError) then
+            cycle
          endif
 
          scaleVal = absTolTracer + relTol * max(abs(passiveTracer2d(iCell)), abs(passiveTracer2dEmbedded(iCell)))
@@ -1907,6 +1917,7 @@ module li_time_integration_fe_rk
 
          if (includeThermal) then
             do k = 1, nVertLevels
+               if (max(layerThickness(k,iCell), layerThicknessEmbedded(k,iCell)) <= minIceForError) cycle
                scaleVal = absTolTracer + relTol * max(abs(temperature(k,iCell)), abs(temperatureEmbedded(k,iCell)))
                if (scaleVal > 0.0_RKIND) then
                   thisErr = abs(temperature(k,iCell) - temperatureEmbedded(k,iCell)) / scaleVal
