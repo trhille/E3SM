@@ -262,30 +262,33 @@ module li_time_integration_fe_rk
       allocate(waterFracPrev(nVertLevels, nCells+1))
       allocate(layerThicknessPrev(nVertLevels, nCells+1))
       allocate(layerThicknessTmp(nVertLevels, nCells+1))
-      allocate(layerThicknessEmbedded(nVertLevels, nCells+1))
-      allocate(layerThicknessStage1(nVertLevels, nCells+1))
-      allocate(layerThicknessStage2(nVertLevels, nCells+1))
       allocate(damage3dPrev(nVertLevels, nCells+1))
       allocate(damage3d(nVertLevels, nCells+1))
       allocate(passiveTracer3dPrev(nVertLevels, nCells+1))
       allocate(passiveTracer3d(nVertLevels, nCells+1))
-      allocate(temperatureEmbedded(nVertLevels, nCells+1))
-      allocate(waterFracEmbedded(nVertLevels, nCells+1))
-      allocate(temperatureStage1(nVertLevels, nCells+1))
-      allocate(temperatureStage2(nVertLevels, nCells+1))
-      allocate(waterFracStage1(nVertLevels, nCells+1))
-      allocate(waterFracStage2(nVertLevels, nCells+1))
       allocate(cellMaskPrev(nCells+1))
       allocate(edgeMaskPrev(nEdges+1))
       allocate(vertexMaskPrev(nVertices+1))
       allocate(damagePrev(nCells+1))
       allocate(passiveTracer2dPrev(nCells+1))
-      allocate(damageEmbedded(nCells+1))
-      allocate(passiveTracer2dEmbedded(nCells+1))
-      allocate(damageStage1(nCells+1))
-      allocate(damageStage2(nCells+1))
-      allocate(passiveTracer2dStage1(nCells+1))
-      allocate(passiveTracer2dStage2(nCells+1))
+
+      if (config_use_embedded_ssprk) then
+         allocate(layerThicknessEmbedded(nVertLevels, nCells+1))
+         allocate(layerThicknessStage1(nVertLevels, nCells+1))
+         allocate(layerThicknessStage2(nVertLevels, nCells+1))
+         allocate(temperatureEmbedded(nVertLevels, nCells+1))
+         allocate(waterFracEmbedded(nVertLevels, nCells+1))
+         allocate(temperatureStage1(nVertLevels, nCells+1))
+         allocate(temperatureStage2(nVertLevels, nCells+1))
+         allocate(waterFracStage1(nVertLevels, nCells+1))
+         allocate(waterFracStage2(nVertLevels, nCells+1))
+         allocate(damageEmbedded(nCells+1))
+         allocate(passiveTracer2dEmbedded(nCells+1))
+         allocate(damageStage1(nCells+1))
+         allocate(damageStage2(nCells+1))
+         allocate(passiveTracer2dStage1(nCells+1))
+         allocate(passiveTracer2dStage2(nCells+1))
+      endif
 
       allocate(sfcMassBalAccum(nCells+1))
       allocate(basalMassBalAccum(nCells+1))
@@ -300,9 +303,6 @@ module li_time_integration_fe_rk
       waterFracPrev(:,:) = 0.0_RKIND
       layerThicknessPrev(:,:) = 0.0_RKIND
       layerThicknessTmp(:,:) = 0.0_RKIND
-      layerThicknessEmbedded(:,:) = 0.0_RKIND
-      layerThicknessStage1(:,:) = 0.0_RKIND
-      layerThicknessStage2(:,:) = 0.0_RKIND
       damage3dPrev(:,:) = 0.0_RKIND
       damage3d(:,:) = 0.0_RKIND
       passiveTracer3dPrev(:,:) = 0.0_RKIND
@@ -310,20 +310,26 @@ module li_time_integration_fe_rk
       edgeMaskPrev(:) = 0
       vertexMaskPrev(:) = 0
       passiveTracer3d(:,:) = 0.0_RKIND
-      temperatureEmbedded(:,:) = 0.0_RKIND
-      waterFracEmbedded(:,:) = 0.0_RKIND
-      temperatureStage1(:,:) = 0.0_RKIND
-      temperatureStage2(:,:) = 0.0_RKIND
-      waterFracStage1(:,:) = 0.0_RKIND
-      waterFracStage2(:,:) = 0.0_RKIND
       damagePrev(:) = 0.0_RKIND
       passiveTracer2dPrev(:) = 0.0_RKIND
-      damageEmbedded(:) = 0.0_RKIND
-      passiveTracer2dEmbedded(:) = 0.0_RKIND
-      damageStage1(:) = 0.0_RKIND
-      damageStage2(:) = 0.0_RKIND
-      passiveTracer2dStage1(:) = 0.0_RKIND
-      passiveTracer2dStage2(:) = 0.0_RKIND
+
+      if (config_use_embedded_ssprk) then
+         layerThicknessEmbedded(:,:) = 0.0_RKIND
+         layerThicknessStage1(:,:) = 0.0_RKIND
+         layerThicknessStage2(:,:) = 0.0_RKIND
+         temperatureEmbedded(:,:) = 0.0_RKIND
+         waterFracEmbedded(:,:) = 0.0_RKIND
+         temperatureStage1(:,:) = 0.0_RKIND
+         temperatureStage2(:,:) = 0.0_RKIND
+         waterFracStage1(:,:) = 0.0_RKIND
+         waterFracStage2(:,:) = 0.0_RKIND
+         damageEmbedded(:) = 0.0_RKIND
+         passiveTracer2dEmbedded(:) = 0.0_RKIND
+         damageStage1(:) = 0.0_RKIND
+         damageStage2(:) = 0.0_RKIND
+         passiveTracer2dStage1(:) = 0.0_RKIND
+         passiveTracer2dStage2(:) = 0.0_RKIND
+      endif
 
       sfcMassBalAccum(:) = 0.0_RKIND
       basalMassBalAccum(:) = 0.0_RKIND
@@ -898,30 +904,30 @@ module li_time_integration_fe_rk
       deallocate(waterFracPrev)
       deallocate(layerThicknessPrev)
       deallocate(layerThicknessTmp)
-      deallocate(layerThicknessEmbedded)
-      deallocate(layerThicknessStage1)
-      deallocate(layerThicknessStage2)
       deallocate(damage3dPrev)
       deallocate(damage3d)
       deallocate(passiveTracer3dPrev)
       deallocate(passiveTracer3d)
-      deallocate(temperatureEmbedded)
-      deallocate(waterFracEmbedded)
-      deallocate(temperatureStage1)
-      deallocate(temperatureStage2)
-      deallocate(waterFracStage1)
-      deallocate(waterFracStage2)
       deallocate(cellMaskPrev)
       deallocate(edgeMaskPrev)
       deallocate(vertexMaskPrev)
       deallocate(damagePrev)
       deallocate(passiveTracer2dPrev)
-      deallocate(damageEmbedded)
-      deallocate(passiveTracer2dEmbedded)
-      deallocate(damageStage1)
-      deallocate(damageStage2)
-      deallocate(passiveTracer2dStage1)
-      deallocate(passiveTracer2dStage2)
+      if (allocated(layerThicknessEmbedded)) deallocate(layerThicknessEmbedded)
+      if (allocated(layerThicknessStage1)) deallocate(layerThicknessStage1)
+      if (allocated(layerThicknessStage2)) deallocate(layerThicknessStage2)
+      if (allocated(temperatureEmbedded)) deallocate(temperatureEmbedded)
+      if (allocated(waterFracEmbedded)) deallocate(waterFracEmbedded)
+      if (allocated(temperatureStage1)) deallocate(temperatureStage1)
+      if (allocated(temperatureStage2)) deallocate(temperatureStage2)
+      if (allocated(waterFracStage1)) deallocate(waterFracStage1)
+      if (allocated(waterFracStage2)) deallocate(waterFracStage2)
+      if (allocated(damageEmbedded)) deallocate(damageEmbedded)
+      if (allocated(passiveTracer2dEmbedded)) deallocate(passiveTracer2dEmbedded)
+      if (allocated(damageStage1)) deallocate(damageStage1)
+      if (allocated(damageStage2)) deallocate(damageStage2)
+      if (allocated(passiveTracer2dStage1)) deallocate(passiveTracer2dStage1)
+      if (allocated(passiveTracer2dStage2)) deallocate(passiveTracer2dStage2)
       deallocate(sfcMassBalAccum)
       deallocate(basalMassBalAccum)
       deallocate(groundedSfcMassBalAccum)
