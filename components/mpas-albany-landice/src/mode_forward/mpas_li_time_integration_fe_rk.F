@@ -819,6 +819,16 @@ module li_time_integration_fe_rk
          return
       endif
 
+      if (useEmbeddedSSPRK) then
+         deltatFull = real(floor(deltatFull, KIND=8), RKIND)
+         if (deltatFull < config_min_adaptive_timestep) then
+            err = 1
+            call mpas_log_write('Embedded SSPRK accepted deltat falls below config_min_adaptive_timestep after flooring', &
+                                messageType=MPAS_LOG_ERR)
+            return
+         endif
+      endif
+
       if (useEmbeddedSSPRK) previousEmbeddedAcceptedDt = deltatFull
 
       ! Restore full accepted timestep on all blocks before advancing the clock.
@@ -1038,7 +1048,6 @@ module li_time_integration_fe_rk
       logical, pointer :: config_print_thickness_advection_info
       logical, pointer :: config_adaptive_timestep
       logical, pointer :: config_adaptive_timestep_include_DCFL
-      logical, pointer :: config_use_embedded_ssprk
 
       character (len=StrKIND), pointer :: &
            config_thickness_advection, &  ! method for advecting thickness and tracers
@@ -1085,7 +1094,6 @@ module li_time_integration_fe_rk
       real (kind=RKIND), pointer :: deltat ! variable in blocks
 
       real (kind=RKIND) :: dtSeconds ! local variable
-      real (kind=RKIND) :: embeddedRKDt
 
       integer :: err_tmp
 
@@ -1094,7 +1102,6 @@ module li_time_integration_fe_rk
       call mpas_pool_get_config(liConfigs, 'config_print_thickness_advection_info', config_print_thickness_advection_info)
       call mpas_pool_get_config(liConfigs, 'config_adaptive_timestep', config_adaptive_timestep)
       call mpas_pool_get_config(liConfigs, 'config_adaptive_timestep_include_DCFL', config_adaptive_timestep_include_DCFL)
-      call mpas_pool_get_config(liConfigs, 'config_use_embedded_ssprk', config_use_embedded_ssprk)
       call mpas_pool_get_config(liConfigs, 'config_thickness_advection', config_thickness_advection)
       call mpas_pool_get_config(liConfigs, 'config_time_integration', config_time_integration)
       call mpas_pool_get_config(liConfigs, 'config_rk_order', config_rk_order)
@@ -1265,19 +1272,10 @@ module li_time_integration_fe_rk
 
       ! Set adaptive timestep if needed
       if (config_adaptive_timestep) then
-         block => domain % blocklist
-         call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
-         call mpas_pool_get_array(meshPool, 'deltat', deltat)
-         embeddedRKDt = deltat
-
          call mpas_pool_get_array(geometryPool, 'calvingCFLdt', calvingCFLdt)
          call mpas_pool_get_array(geometryPool, 'faceMeltingCFLdt', faceMeltingCFLdt)
          call mpas_pool_get_array(meshPool, 'processLimitingTimestep', processLimitingTimestep)
-         if (config_use_embedded_ssprk) then
-            call set_timestep(allowableAdvecDtAllProcs, allowableDiffDtAllProcs, calvingCFLdt, faceMeltingCFLdt, domain % clock, dtSeconds, processLimitingTimestep, err_tmp, embeddedRKDt)
-         else
-            call set_timestep(allowableAdvecDtAllProcs, allowableDiffDtAllProcs, calvingCFLdt, faceMeltingCFLdt, domain % clock, dtSeconds, processLimitingTimestep, err_tmp)
-         endif
+         call set_timestep(allowableAdvecDtAllProcs, allowableDiffDtAllProcs, calvingCFLdt, faceMeltingCFLdt, domain % clock, dtSeconds, processLimitingTimestep, err_tmp)
          err = ior(err,err_tmp)
          ! Set new value on all blocks
          block => domain % blocklist
@@ -1634,7 +1632,7 @@ module li_time_integration_fe_rk
 !>  This routine sdjusts the time step based on the CFL condition.
 !
 !-----------------------------------------------------------------------
-   subroutine set_timestep(allowableAdvecDt, allowableDiffDt, calvingCFLdt, faceMeltingCFLdt, clock, dtSeconds, CFLprocess, err, embeddedRKDt)
+   subroutine set_timestep(allowableAdvecDt, allowableDiffDt, calvingCFLdt, faceMeltingCFLdt, clock, dtSeconds, CFLprocess, err)
       use mpas_timekeeping
 
       !-----------------------------------------------------------------
@@ -1644,7 +1642,6 @@ module li_time_integration_fe_rk
       real (kind=RKIND), intent(in) :: allowableDiffDt
       real (kind=RKIND), intent(in) :: calvingCFLdt, faceMeltingCFLdt
       type (MPAS_Clock_type), intent(in) :: clock
-      real (kind=RKIND), intent(in), optional :: embeddedRKDt
 
       !-----------------------------------------------------------------
       ! output variables
@@ -1743,14 +1740,6 @@ module li_time_integration_fe_rk
 
       ! Take minimum of the max adaptive timestep setting and the allowable dt from the CFL condition
       proposedDt = min(allowableDt, config_max_adaptive_timestep)
-
-      ! If embedded SSPRK is active, do not let set_timestep increase dt beyond
-      ! the current embedded-RK-controlled timestep.
-      if (present(embeddedRKDt)) then
-         if (embeddedRKDt > 0.0_RKIND) then
-            proposedDt = min(proposedDt, embeddedRKDt)
-         endif
-      endif
 
       ! Round down the proposed dt to avoid complications with fractional seconds
       ! (some timekeeping-related functionality, like restarts, don't support them)
