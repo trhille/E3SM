@@ -110,6 +110,7 @@ module li_time_integration_fe_rk
       type (block_type), pointer :: block
       integer :: err_tmp
       type (mpas_pool_type), pointer :: geometryPool, thermalPool, meshPool, velocityPool
+      type (mpas_pool_type), pointer :: meshPoolTmp
       
       logical, pointer :: config_restore_calving_front, &
                           config_restore_calving_front_prevent_retreat
@@ -187,7 +188,9 @@ module li_time_integration_fe_rk
       integer :: iCell1, iCell2, iEdge, theGroundedCell
       integer, dimension(:), pointer :: edgeMask, cellMask, vertexMask
       real (kind=RKIND), pointer :: deltat, config_ice_density
+      real (kind=RKIND), pointer :: deltatTmp
       real (kind=RKIND) :: deltatFull
+      real (kind=RKIND) :: deltatStage
       real (kind=RKIND), dimension(4) :: rkSubstepWeights
       real (kind=RKIND), dimension(4) :: rkSSPweights
       real (kind=RKIND), dimension(4) :: rkTendWeights ! Weights used for calculating budget terms
@@ -195,7 +198,7 @@ module li_time_integration_fe_rk
       logical :: solveVeloAfterCalving
       logical :: useEmbeddedSSPRK, includeThermalForError, stepAccepted
       integer :: stepAttempt, maxStepAttempts, embeddedHighOrder
-      real (kind=RKIND) :: rkErrorNorm, dtScale
+      real (kind=RKIND) :: rkErrorNorm, rkErrorNormGlobal, dtScale
 
       err = 0
       err_tmp = 0
@@ -207,6 +210,7 @@ module li_time_integration_fe_rk
       maxStepAttempts = 1
       embeddedHighOrder = 3
       rkErrorNorm = 0.0_RKIND
+      rkErrorNormGlobal = 0.0_RKIND
       dtScale = 1.0_RKIND
 
       call mpas_pool_get_config(liConfigs, 'config_restore_calving_front', config_restore_calving_front)
@@ -553,7 +557,16 @@ module li_time_integration_fe_rk
          do rkStage = 1, nRKstages
             call mpas_log_write('beginning rk stage $i of $i', &
                                 intArgs=(/rkStage, nRKstages/))
-            deltat = deltatFull * rkSubstepWeights(rkStage)
+            deltatStage = deltatFull * rkSubstepWeights(rkStage)
+            ! Keep deltat consistent on all blocks for retry attempts.
+            block => domain % blocklist
+            do while (associated(block))
+               call mpas_pool_get_subpool(block % structs, 'mesh', meshPoolTmp)
+               call mpas_pool_get_array(meshPoolTmp, 'deltat', deltatTmp)
+               deltatTmp = deltatStage
+               block => block % next
+            enddo
+            deltat = deltatStage
 
             ! === calculate damage ===========
             if (config_calculate_damage) then
@@ -761,6 +774,9 @@ module li_time_integration_fe_rk
                                            damage, damageEmbedded, nVertLevels, nCells, includeThermalForError, &
                                            config_calculate_damage, config_embedded_rk_rtol, &
                                            config_embedded_rk_atol_thickness, config_embedded_rk_atol_tracer, rkErrorNorm)
+
+         call mpas_dmpar_max_real(domain % dminfo, rkErrorNorm, rkErrorNormGlobal)
+         rkErrorNorm = rkErrorNormGlobal
 
          if (rkErrorNorm <= 1.0_RKIND) then
             stepAccepted = .true.
