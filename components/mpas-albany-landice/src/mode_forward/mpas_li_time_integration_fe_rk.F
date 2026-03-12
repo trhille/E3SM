@@ -821,6 +821,16 @@ module li_time_integration_fe_rk
 
       if (useEmbeddedSSPRK) previousEmbeddedAcceptedDt = deltatFull
 
+      ! Restore full accepted timestep on all blocks before advancing the clock.
+      block => domain % blocklist
+      do while (associated(block))
+         call mpas_pool_get_subpool(block % structs, 'mesh', meshPoolTmp)
+         call mpas_pool_get_array(meshPoolTmp, 'deltat', deltatTmp)
+         deltatTmp = deltatFull
+         block => block % next
+      enddo
+      deltat = deltatFull
+
       ! Advance model time only once, after this step has been accepted.
       call mpas_timer_start("advancing clock")
       call advance_clock(domain, err_tmp)
@@ -863,16 +873,6 @@ module li_time_integration_fe_rk
                      advMaskHighOrder, &
                      advMask2ndOrder)
       endif
-
-! Reset time step to full length after RK loop
-   block => domain % blocklist
-   do while (associated(block))
-      call mpas_pool_get_subpool(block % structs, 'mesh', meshPoolTmp)
-      call mpas_pool_get_array(meshPoolTmp, 'deltat', deltatTmp)
-      deltatTmp = deltatFull
-      block => block % next
-   enddo
-   deltat = deltatFull
 
 ! === Update subglacial hydrology  ===========
 ! It's not clear where the best place to call this should be.
