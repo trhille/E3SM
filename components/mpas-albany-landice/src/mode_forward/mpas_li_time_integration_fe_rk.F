@@ -200,6 +200,7 @@ module li_time_integration_fe_rk
       integer :: stepAttempt, maxStepAttempts, embeddedHighOrder
       integer :: rkErrorCountLocal, rkErrorCountGlobal
       real (kind=RKIND) :: rkErrorNorm, rkErrorNormGlobal, rkErrorSumSqLocal, rkErrorSumSqGlobal, dtScale
+      real (kind=RKIND) :: rk2EmbeddedW1, rk2EmbeddedW2
       real (kind=RKIND), save :: previousEmbeddedAcceptedDt = -1.0_RKIND
 
       err = 0
@@ -218,6 +219,8 @@ module li_time_integration_fe_rk
       rkErrorCountGlobal = 0
       rkErrorSumSqLocal = 0.0_RKIND
       rkErrorSumSqGlobal = 0.0_RKIND
+      rk2EmbeddedW1 = 0.694021459207626_RKIND
+      rk2EmbeddedW2 = 0.305978540792374_RKIND
       dtScale = 1.0_RKIND
 
       call mpas_pool_get_config(liConfigs, 'config_restore_calving_front', config_restore_calving_front)
@@ -748,23 +751,29 @@ module li_time_integration_fe_rk
          endif
 
          if (config_rk_order == 2) then
-            ! SSPRK2(2,2) with embedded RK1 uses stage-1 Forward Euler endpoint.
-            layerThicknessEmbedded(:,:) = layerThicknessStage1(:,:)
+            ! SSPRK2(2,2) embedded companion from Fekete et al. (2022),
+            ! using convex stage-state weights.
+            layerThicknessEmbedded(:,:) = rk2EmbeddedW1 * layerThicknessStage1(:,:) + &
+                                          rk2EmbeddedW2 * layerThickness(:,:)
             if (includeThermalForError) then
-               temperatureEmbedded(:,:) = temperatureStage1(:,:)
-               waterFracEmbedded(:,:) = waterFracStage1(:,:)
+               temperatureEmbedded(:,:) = rk2EmbeddedW1 * temperatureStage1(:,:) + &
+                                          rk2EmbeddedW2 * temperature(:,:)
+               waterFracEmbedded(:,:) = rk2EmbeddedW1 * waterFracStage1(:,:) + &
+                                        rk2EmbeddedW2 * waterFrac(:,:)
             endif
-            damageEmbedded(:) = damageStage1(:)
-            passiveTracer2dEmbedded(:) = passiveTracer2dStage1(:)
+            damageEmbedded(:) = rk2EmbeddedW1 * damageStage1(:) + &
+                                rk2EmbeddedW2 * damage(:)
+            passiveTracer2dEmbedded(:) = rk2EmbeddedW1 * passiveTracer2dStage1(:) + &
+                                         rk2EmbeddedW2 * passiveTracer2d(:)
          elseif (config_rk3_stages == 3) then
-            ! SSPRK3(3,3) embedded RK2: y* = y0 + h/2*(k1+k2) = 2*y_stage2 - y0.
-            layerThicknessEmbedded(:,:) = 2.0_RKIND * layerThicknessStage2(:,:) - layerThicknessPrev(:,:)
+            ! SSPRK3(3,3): use stage-2 endpoint as lower-order companion.
+            layerThicknessEmbedded(:,:) = layerThicknessStage2(:,:)
             if (includeThermalForError) then
-               temperatureEmbedded(:,:) = 2.0_RKIND * temperatureStage2(:,:) - temperaturePrev(:,:)
-               waterFracEmbedded(:,:) = 2.0_RKIND * waterFracStage2(:,:) - waterFracPrev(:,:)
+               temperatureEmbedded(:,:) = temperatureStage2(:,:)
+               waterFracEmbedded(:,:) = waterFracStage2(:,:)
             endif
-            damageEmbedded(:) = 2.0_RKIND * damageStage2(:) - damagePrev(:)
-            passiveTracer2dEmbedded(:) = 2.0_RKIND * passiveTracer2dStage2(:) - passiveTracer2dPrev(:)
+            damageEmbedded(:) = damageStage2(:)
+            passiveTracer2dEmbedded(:) = passiveTracer2dStage2(:)
          else
             ! SSPRK3(4,3): use stage-2 endpoint as SSP-consistent lower-order companion.
             layerThicknessEmbedded(:,:) = layerThicknessStage2(:,:)
