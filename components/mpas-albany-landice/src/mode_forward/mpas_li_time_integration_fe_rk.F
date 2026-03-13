@@ -1692,7 +1692,6 @@ module li_time_integration_fe_rk
       type (MPAS_Time_type) :: nextForceTime, currTime
       type (MPAS_TimeInterval_type) :: intervalToNextForceTime
       real (kind=RKIND) :: secondsToNextForceTime
-      real (kind=RKIND) :: fracSecondsToNextForceTime
       real (kind=RKIND) :: allowableDt
       real (kind=RKIND) :: proposedDt
       integer :: err_tmp
