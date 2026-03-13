@@ -766,18 +766,14 @@ module li_time_integration_fe_rk
             damageEmbedded(:) = 2.0_RKIND * damageStage2(:) - damagePrev(:)
             passiveTracer2dEmbedded(:) = 2.0_RKIND * passiveTracer2dStage2(:) - passiveTracer2dPrev(:)
          else
-            ! SSPRK3(4,3) embedded RK2 midpoint: y* = y0 + h*k2 = y0 + 2*(y_stage2 - y_stage1).
-            layerThicknessEmbedded(:,:) = layerThicknessPrev(:,:) + &
-                                          2.0_RKIND * (layerThicknessStage2(:,:) - layerThicknessStage1(:,:))
+            ! SSPRK3(4,3): use stage-2 endpoint as SSP-consistent lower-order companion.
+            layerThicknessEmbedded(:,:) = layerThicknessStage2(:,:)
             if (includeThermalForError) then
-               temperatureEmbedded(:,:) = temperaturePrev(:,:) + &
-                                          2.0_RKIND * (temperatureStage2(:,:) - temperatureStage1(:,:))
-               waterFracEmbedded(:,:) = waterFracPrev(:,:) + &
-                                        2.0_RKIND * (waterFracStage2(:,:) - waterFracStage1(:,:))
+               temperatureEmbedded(:,:) = temperatureStage2(:,:)
+               waterFracEmbedded(:,:) = waterFracStage2(:,:)
             endif
-            damageEmbedded(:) = damagePrev(:) + 2.0_RKIND * (damageStage2(:) - damageStage1(:))
-            passiveTracer2dEmbedded(:) = passiveTracer2dPrev(:) + &
-                                         2.0_RKIND * (passiveTracer2dStage2(:) - passiveTracer2dStage1(:))
+            damageEmbedded(:) = damageStage2(:)
+            passiveTracer2dEmbedded(:) = passiveTracer2dStage2(:)
          endif
 
          call li_embedded_ssprk_error_norm(layerThickness, layerThicknessEmbedded, temperature, temperatureEmbedded, &
