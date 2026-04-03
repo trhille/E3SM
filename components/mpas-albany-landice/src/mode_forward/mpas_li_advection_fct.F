@@ -66,7 +66,8 @@ module li_tracer_advection_fct
                                         normalThicknessFlux, w, dt,    &
                                         nTracers, &
                                         layerThicknessEdgeFlux, &
-                                        computeBudgets)!{{{
+                                        computeBudgets, &
+                                        applyFluxLimiter)!{{{
       use li_mesh
       !-----------------------------------------------------------------
       ! Input/Output parameters
@@ -95,6 +96,9 @@ module li_tracer_advection_fct
 
       logical, intent(in) :: &
          computeBudgets    !< [in] Flag to compute active tracer budgets
+
+      logical, intent(in), optional :: &
+         applyFluxLimiter !< [in] If false, skip FCT limiter rescaling for this call
       !-----------------------------------------------------------------
       ! Local variables
       !-----------------------------------------------------------------
@@ -137,9 +141,17 @@ module li_tracer_advection_fct
       real (kind=RKIND), parameter :: &
          eps = 1.e-10_RKIND  ! small number to avoid numerical difficulties
 
+      logical :: applyFluxLimiterLocal
+
       ! end of preamble
       !----------------
       ! begin code
+
+      if (present(applyFluxLimiter)) then
+         applyFluxLimiterLocal = applyFluxLimiter
+      else
+         applyFluxLimiterLocal = .true.
+      endif
 
 #ifdef _ADV_TIMERS
       call mpas_timer_start('allocates')
@@ -383,22 +395,27 @@ module li_tracer_advection_fct
            ! and the bounds on the newly updated value
            ! Factors are placed in the flxIn and flxOut arrays
            do k = 1, nVertLevels !minLevelCell(iCell), maxLevelCell(iCell)
-              ! Here workTend is the upwind tendency
-              tracerUpwindNew = (tracerCur(k,iCell)*layerThickness(k,iCell) &
-                              + dt*workTend(k,iCell))*hProvInv(k,iCell)
-              tracerMinNew = tracerUpwindNew &
-                           + dt*flxOut(k,iCell)*hProvInv(k,iCell)
-              tracerMaxNew = tracerUpwindNew &
-                           + dt*flxIn (k,iCell)*hProvInv(k,iCell)
+              if (applyFluxLimiterLocal) then
+                 ! Here workTend is the upwind tendency
+                 tracerUpwindNew = (tracerCur(k,iCell)*layerThickness(k,iCell) &
+                                 + dt*workTend(k,iCell))*hProvInv(k,iCell)
+                 tracerMinNew = tracerUpwindNew &
+                              + dt*flxOut(k,iCell)*hProvInv(k,iCell)
+                 tracerMaxNew = tracerUpwindNew &
+                              + dt*flxIn (k,iCell)*hProvInv(k,iCell)
 
-              scaleFactor = (tracerMax(k,iCell) - tracerUpwindNew)/ &
-                            (tracerMaxNew - tracerUpwindNew + eps)
-              flxIn (k,iCell) = min(1.0_RKIND, &
-                                max(0.0_RKIND, scaleFactor))
-              scaleFactor = (tracerUpwindNew - tracerMin(k,iCell))/ &
-                            (tracerUpwindNew - tracerMinNew + eps)
-              flxOut(k,iCell) = min(1.0_RKIND, &
-                                max(0.0_RKIND, scaleFactor))
+                 scaleFactor = (tracerMax(k,iCell) - tracerUpwindNew)/ &
+                               (tracerMaxNew - tracerUpwindNew + eps)
+                 flxIn (k,iCell) = min(1.0_RKIND, &
+                                   max(0.0_RKIND, scaleFactor))
+                 scaleFactor = (tracerUpwindNew - tracerMin(k,iCell))/ &
+                               (tracerUpwindNew - tracerMinNew + eps)
+                 flxOut(k,iCell) = min(1.0_RKIND, &
+                                   max(0.0_RKIND, scaleFactor))
+              else
+                 flxIn(k,iCell) = 1.0_RKIND
+                 flxOut(k,iCell) = 1.0_RKIND
+              endif
            end do ! k loop
         end do ! iCell loop
 

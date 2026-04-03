@@ -116,6 +116,7 @@ module li_time_integration_fe_rk
       logical, pointer :: config_calculate_damage
       logical, pointer :: config_finalize_damage_after_advection
       logical, pointer :: config_update_velocity_before_calving
+      logical, pointer :: config_apply_limiter_to_last_stage_only
       character (len=StrKIND), pointer :: config_thickness_advection, &
                                           config_tracer_advection
       character (len=StrKIND), pointer :: config_thermal_solver
@@ -184,6 +185,8 @@ module li_time_integration_fe_rk
       call mpas_pool_get_config(liConfigs, 'config_time_integration', config_time_integration)
       call mpas_pool_get_config(liConfigs, 'config_ice_density', config_ice_density)
       call mpas_pool_get_config(liConfigs, 'config_update_velocity_before_calving', config_update_velocity_before_calving)
+      call mpas_pool_get_config(liConfigs, 'config_apply_limiter_to_last_stage_only', &
+                    config_apply_limiter_to_last_stage_only)
 
       call mpas_pool_get_subpool(domain % blocklist % structs, 'geometry', geometryPool)
       call mpas_pool_get_subpool(domain % blocklist % structs, 'thermal', thermalPool)
@@ -420,7 +423,8 @@ module li_time_integration_fe_rk
 
          ! === Compute new state for prognostic variables ===
          call mpas_timer_start("advect thickness and tracers")
-         call advection_solver(domain, err_tmp)
+         call advection_solver(domain, err_tmp, rkStage, nRKstages, &
+                               config_apply_limiter_to_last_stage_only)
          err = ior(err, err_tmp)
          call mpas_timer_stop("advect thickness and tracers")
 
@@ -1048,7 +1052,7 @@ module li_time_integration_fe_rk
 !>        in calculate tendencies are now in prepare_advection.
 !-----------------------------------------------------------------------
 
-   subroutine advection_solver(domain, err)
+   subroutine advection_solver(domain, err, rkStage, nRKstages, applyLimiterToLastStageOnly)
 
       use mpas_timekeeping
       use li_mask
@@ -1061,6 +1065,9 @@ module li_time_integration_fe_rk
       ! input/output variables
       !-----------------------------------------------------------------
       type (domain_type), intent(inout) :: domain  !< Input/Output: domain object
+      integer, intent(in) :: rkStage
+      integer, intent(in) :: nRKstages
+      logical, intent(in) :: applyLimiterToLastStageOnly
       !-----------------------------------------------------------------
       ! output variables
       !-----------------------------------------------------------------
@@ -1200,7 +1207,9 @@ module li_time_integration_fe_rk
                  thermalPool,            &
                  scratchPool,            &
                  err_tmp,                &
-                 advectTracersIn = .true.)
+                 advectTracersIn = .true., &
+                 applyFluxLimiterIn = (.not. applyLimiterToLastStageOnly) .or. &
+                              (rkStage == nRKstages))
 
             err = ior(err,err_tmp)
 
@@ -1219,7 +1228,9 @@ module li_time_integration_fe_rk
                  thermalPool,            &
                  scratchPool,            &
                  err_tmp,                &
-                 advectTracersIn = .false.)
+                 advectTracersIn = .false., &
+                 applyFluxLimiterIn = (.not. applyLimiterToLastStageOnly) .or. &
+                              (rkStage == nRKstages))
 
                  !call mpas_log_write("errtmp=$i",intArgs=(/err_tmp/))
             err = ior(err,err_tmp)

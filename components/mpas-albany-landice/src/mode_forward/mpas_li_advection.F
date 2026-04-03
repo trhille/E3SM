@@ -83,7 +83,8 @@ module li_advection
         thermalPool,            &
         scratchPool,            &
         err,                    &
-        advectTracersIn)
+         advectTracersIn,        &
+         applyFluxLimiterIn)
 
      use li_setup, only: li_calculate_layerThickness
      use li_tracer_advection_fct, only: li_tracer_advection_fct_tend
@@ -103,6 +104,9 @@ module li_advection
       logical, intent(in), optional :: &
            advectTracersIn        !< Input: if true, then advect tracers as well as thickness
                                   !TODO: Default is false; change to true?
+
+        logical, intent(in), optional :: &
+            applyFluxLimiterIn     !< Input: if true, apply the FCT limiter in this advection call
 
       !-----------------------------------------------------------------
       !
@@ -229,6 +233,7 @@ module li_advection
       integer, pointer :: config_num_halos
 
       logical :: advectTracers     ! if true, then advect tracers as well as thickness
+      logical :: applyFluxLimiter
 
       integer :: iCell1, iCell2, theGroundedCell
       integer, parameter :: horizAdvOrder = 4
@@ -273,6 +278,12 @@ module li_advection
          advectTracers = advectTracersIn
       else
          advectTracers = .false.
+      endif
+
+      if (present(applyFluxLimiterIn)) then
+         applyFluxLimiter = applyFluxLimiterIn
+      else
+         applyFluxLimiter = .true.
       endif
 
       ! get dimensions
@@ -498,14 +509,16 @@ module li_advection
              call li_tracer_advection_fct_tend(&
                   tend, advectedTracers, layerThicknessOld, &
                   layerThicknessEdge * layerNormalVelocity, 0 * normalVelocity, dt,    &
-                  nTracers, layerThicknessEdgeFlux, computeBudgets=.false.)!{{{
+                  nTracers, layerThicknessEdgeFlux, computeBudgets=.false., &
+                  applyFluxLimiter=applyFluxLimiter)!{{{
          elseif (trim(config_thickness_advection) .eq. 'fct') then
              ! Call fct routine for thickness first, and use layerThicknessEdgeFlux
              ! returned by that call as normalThicknessFlux for call to tracer fct
              call li_tracer_advection_fct_tend(&
                   tend(nTracers:,:,:), advectedTracers(nTracers:,:,:), layerThicknessOld * 0.0_RKIND + 1.0_RKIND, &
                   layerNormalVelocity, 0.0_RKIND * normalVelocity, dt,    &
-                  1, layerThicknessEdgeFlux, computeBudgets=.false.)
+                  1, layerThicknessEdgeFlux, computeBudgets=.false., &
+                  applyFluxLimiter=applyFluxLimiter)
              ! layerThickness is last tracer. However, for some reason
              ! this: layerThickness(:,:) = advectedTracers(nTracers,:,:) does not conserve mass!
              ! This does conserve mass:
@@ -521,7 +534,8 @@ module li_advection
                 call li_tracer_advection_fct_tend(&
                      tend(1:nTracers-1,:,:), advectedTracers(1:nTracers-1,:,:), layerThicknessOld, &
                      layerThicknessEdgeFlux, 0.0_RKIND * normalVelocity, dt,    &
-                     nTracers-1, computeBudgets=.false.)
+                   nTracers-1, computeBudgets=.false., &
+                   applyFluxLimiter=applyFluxLimiter)
              elseif (trim(config_tracer_advection) .eq. 'none') then
                 ! do nothing
              else
