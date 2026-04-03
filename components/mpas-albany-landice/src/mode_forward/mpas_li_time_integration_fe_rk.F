@@ -116,6 +116,7 @@ module li_time_integration_fe_rk
       logical, pointer :: config_calculate_damage
       logical, pointer :: config_finalize_damage_after_advection
       logical, pointer :: config_update_velocity_before_calving
+      logical, pointer :: config_update_velocity_every_rk_stage
       character (len=StrKIND), pointer :: config_thickness_advection, &
                                           config_tracer_advection
       character (len=StrKIND), pointer :: config_thermal_solver
@@ -184,6 +185,7 @@ module li_time_integration_fe_rk
       call mpas_pool_get_config(liConfigs, 'config_time_integration', config_time_integration)
       call mpas_pool_get_config(liConfigs, 'config_ice_density', config_ice_density)
       call mpas_pool_get_config(liConfigs, 'config_update_velocity_before_calving', config_update_velocity_before_calving)
+      call mpas_pool_get_config(liConfigs, 'config_update_velocity_every_rk_stage', config_update_velocity_every_rk_stage)
 
       call mpas_pool_get_subpool(domain % blocklist % structs, 'geometry', geometryPool)
       call mpas_pool_get_subpool(domain % blocklist % structs, 'thermal', thermalPool)
@@ -523,12 +525,13 @@ module li_time_integration_fe_rk
          call mpas_dmpar_field_halo_exch(domain, 'damage')
          call mpas_dmpar_field_halo_exch(domain, 'passiveTracer2d')
 
-         call mpas_timer_stop("halo updates")
+          call mpas_timer_stop("halo updates")
 
-         ! Update velocity for each RK step
-         ! === Solve Velocity =====================
-         if ( config_update_velocity_before_calving .or. ( (.not. config_update_velocity_before_calving) &
-              .and. (rkStage < nRKstages) ) ) then
+          ! Update velocity for each RK step
+          ! === Solve Velocity =====================
+          if ( config_update_velocity_every_rk_stage .and. &
+              ( config_update_velocity_before_calving .or. &
+               ( (.not. config_update_velocity_before_calving) .and. (rkStage < nRKstages) ) ) ) then
 
             if (config_restore_calving_front) then
                ! restore the calving front to its initial position before velocity solve.
@@ -602,6 +605,14 @@ module li_time_integration_fe_rk
       call li_SGH_solve(domain, err_tmp)
       err = ior(err, err_tmp)
       call mpas_timer_stop("subglacial hydro")
+
+      ! If velocity is not updated at every RK stage, do one solve here
+      ! when velocity must be available before calving.
+      if ( (.not. config_update_velocity_every_rk_stage) .and. &
+           config_update_velocity_before_calving ) then
+         call li_velocity_solve(domain, solveVelo=.true., updateMask=.true., err=err_tmp)
+         err = ior(err, err_tmp)
+      endif
 
 ! === Calve ice ========================
       call mpas_timer_start("calve_ice")
