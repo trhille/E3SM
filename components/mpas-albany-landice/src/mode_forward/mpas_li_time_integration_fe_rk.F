@@ -155,6 +155,18 @@ module li_time_integration_fe_rk
                                                         passiveTracer3dPrev, &
                                                         damage3d, &
                                                         damage3dPrev
+      ! Extra registers needed for SSP RK(5,4): post-advection state saved after
+      ! stages 2 and 4 (before SSP blending) so stage 5 can blend them.
+      real (kind=RKIND), dimension(:,:), allocatable :: layerThicknessPostAdv2, &
+                                                        layerThicknessPostAdv4, &
+                                                        temperaturePostAdv2, &
+                                                        temperaturePostAdv4, &
+                                                        waterFracPostAdv2, &
+                                                        waterFracPostAdv4, &
+                                                        damage3dPostAdv2, &
+                                                        damage3dPostAdv4, &
+                                                        passiveTracer3dPostAdv2, &
+                                                        passiveTracer3dPostAdv4
       integer, pointer :: nVertLevels
       integer, pointer :: nCells, nEdges, nVertices
       integer, pointer :: albanyVelocityError
@@ -162,9 +174,13 @@ module li_time_integration_fe_rk
       integer, dimension(:), pointer :: edgeMask, cellMask, vertexMask
       real (kind=RKIND), pointer :: deltat, config_ice_density
       real (kind=RKIND) :: deltatFull
-      real (kind=RKIND), dimension(4) :: rkSubstepWeights
-      real (kind=RKIND), dimension(4) :: rkSSPweights
-      real (kind=RKIND), dimension(4) :: rkTendWeights ! Weights used for calculating budget terms
+      real (kind=RKIND), dimension(5) :: rkSubstepWeights
+      real (kind=RKIND), dimension(5) :: rkSSPweights
+      real (kind=RKIND), dimension(5) :: rkTendWeights ! Weights used for calculating budget terms
+      ! SSP RK(5,4): stage 5 blends three prior post-advection states (u^1, u^3, u^4).
+      ! rkSSPweights54stage5(j) is the weight of post-advection state j in stage 5.
+      real (kind=RKIND), dimension(3) :: rkSSPweights54stage5
+      logical :: isSPRK54  ! .true. when using SSP RK(5,4)
       integer :: nRKstages
       logical :: solveVeloAfterCalving
 
@@ -224,6 +240,7 @@ module li_time_integration_fe_rk
       allocate(edgeMaskPrev(nEdges+1))
       allocate(vertexMaskPrev(nVertices+1))
 
+
       allocate(sfcMassBalAccum(nCells+1))
       allocate(basalMassBalAccum(nCells+1))
       allocate(groundedSfcMassBalAccum(nCells+1))
@@ -244,6 +261,31 @@ module li_time_integration_fe_rk
       edgeMaskPrev(:) = 0
       vertexMaskPrev(:) = 0
       passiveTracer3d(:,:) = 0.0_RKIND
+      isSPRK54 = .false.
+      if ( (trim(config_time_integration) == 'runge_kutta') .and. &(config_rk_order == 4) ) then
+         ! SSP RK(5,4) extra registers - only meaningfully populated when isSPRK54=.true.
+         allocate(layerThicknessPostAdv2(nVertLevels, nCells+1))
+         allocate(layerThicknessPostAdv4(nVertLevels, nCells+1))
+         allocate(temperaturePostAdv2(nVertLevels, nCells+1))
+         allocate(temperaturePostAdv4(nVertLevels, nCells+1))
+         allocate(waterFracPostAdv2(nVertLevels, nCells+1))
+         allocate(waterFracPostAdv4(nVertLevels, nCells+1))
+         allocate(damage3dPostAdv2(nVertLevels, nCells+1))
+         allocate(damage3dPostAdv4(nVertLevels, nCells+1))
+         allocate(passiveTracer3dPostAdv2(nVertLevels, nCells+1))
+         allocate(passiveTracer3dPostAdv4(nVertLevels, nCells+1))
+         layerThicknessPostAdv2(:,:) = 0.0_RKIND
+         layerThicknessPostAdv4(:,:) = 0.0_RKIND
+         temperaturePostAdv2(:,:) = 0.0_RKIND
+         temperaturePostAdv4(:,:) = 0.0_RKIND
+         waterFracPostAdv2(:,:) = 0.0_RKIND
+         waterFracPostAdv4(:,:) = 0.0_RKIND
+         damage3dPostAdv2(:,:) = 0.0_RKIND
+         damage3dPostAdv4(:,:) = 0.0_RKIND
+         passiveTracer3dPostAdv2(:,:) = 0.0_RKIND
+         passiveTracer3dPostAdv4(:,:) = 0.0_RKIND
+         isSPRK54 = .true.
+      endif
 
       sfcMassBalAccum(:) = 0.0_RKIND
       basalMassBalAccum(:) = 0.0_RKIND
@@ -395,6 +437,45 @@ module li_time_integration_fe_rk
                                 messageType=MPAS_LOG_ERR)
             return
         endif
+      elseif ( (trim(config_time_integration) == 'runge_kutta') .and. &
+               (config_rk_order == 4) ) then
+         ! Use optimal five-stage, fourth-order Strong Stability Preserving RK
+         ! method of Spiteri & Ruuth (2002), doi:10.1137/S0036142901389025.
+         ! CFL coefficient c ~= 1.5082. All stages use substep deltat = deltatFull/c.
+         ! Stages 1-4 use the standard 2-source SSP blend.
+         ! Stage 5 performs a three-way blend of post-advection states from
+         ! stages 2 (referenced as u^1 after FE), 4 (u^3 after FE), and 5 (u^4 after FE);
+         ! those saved states are stored in the PostAdv2/PostAdv4 registers.
+         ! The canonical Shu-Osher blending weights are:
+         !   d_i   = coefficient of u^n in stage i
+         !   P_i,j = coefficient of (u^j + r_inv*dt*F(u^j)) in stage i
+         ! where r_inv = deltatFull/c is the substep length.
+         isSPRK54 = .true.
+         nRKstages = 5
+         ! All substeps use the same dt = deltatFull * (1/c)
+         rkSubstepWeights(1:5) = 1.0_RKIND / 1.508180045921066_RKIND
+
+         ! rkSSPweights(i) = d_i = coefficient of u^n in stage i blend (stages 1-4)
+         ! For stage 5, the d_5 weight and the three P-weights are stored separately.
+         rkSSPweights(1) = 0.409167108490649_RKIND
+         rkSSPweights(2) = 0.444370494457990_RKIND
+         rkSSPweights(3) = 0.620101851776455_RKIND
+         rkSSPweights(4) = 0.178079955488117_RKIND
+         rkSSPweights(5) = 0.238007217753867_RKIND  ! d_5 (u^n weight in stage 5)
+
+         ! rkSSPweights54stage5(1) = P[5,1]: weight of postAdv state from stage 2
+         ! rkSSPweights54stage5(2) = P[5,3]: weight of postAdv state from stage 4
+         ! rkSSPweights54stage5(3) = P[5,4]: weight of postAdv state from current FE
+         rkSSPweights54stage5(1) = 0.287389178009772_RKIND
+         rkSSPweights54stage5(2) = 0.133743627713513_RKIND
+         rkSSPweights54stage5(3) = 0.340859976274717_RKIND
+
+         ! rkTendWeights: Butcher b-vector weights for budget accumulation
+         rkTendWeights(1) = 0.146811876157876_RKIND
+         rkTendWeights(2) = 0.248482909391317_RKIND
+         rkTendWeights(3) = 0.104258830279481_RKIND
+         rkTendWeights(4) = 0.274438901048481_RKIND
+         rkTendWeights(5) = 0.226007483122845_RKIND
       else
          err = 1
          call mpas_log_write('config_time_integration = ' // trim(config_time_integration) &
@@ -423,10 +504,56 @@ module li_time_integration_fe_rk
          err = ior(err, err_tmp)
          call mpas_timer_stop("advect thickness and tracers")
 
+         ! SSP RK(5,4): save post-advection state before SSP blend for stages 2 and 4.
+         ! Stage 5 needs references to these as inputs to its three-way blend.
+         if (isSPRK54 .and. (rkStage == 2 .or. rkStage == 4)) then
+            call mpas_pool_get_array(geometryPool, 'layerThickness', layerThickness)
+            call mpas_pool_get_array(geometryPool, 'passiveTracer2d', passiveTracer2d)
+            call mpas_pool_get_array(thermalPool, 'temperature', temperature)
+            call mpas_pool_get_array(thermalPool, 'waterFrac', waterFrac)
+            if (rkStage == 2) then
+               layerThicknessPostAdv2(:,:) = layerThickness(:,:)
+               if (trim(config_thermal_solver) .ne. 'none') then
+                  temperaturePostAdv2(:,:) = temperature(:,:)
+                  waterFracPostAdv2(:,:) = waterFrac(:,:)
+               endif
+               if (config_calculate_damage) then
+                  call mpas_pool_get_array(geometryPool, 'damage', damage)
+                  do iCell = 1, nCells
+                     damage3dPostAdv2(:,iCell) = damage(iCell)
+                  enddo
+               endif
+               do iCell = 1, nCells
+                  do k = 1, nVertLevels
+                     passiveTracer3dPostAdv2(k,iCell) = passiveTracer2d(iCell)
+                  enddo
+               enddo
+            else  ! rkStage == 4
+               layerThicknessPostAdv4(:,:) = layerThickness(:,:)
+               if (trim(config_thermal_solver) .ne. 'none') then
+                  temperaturePostAdv4(:,:) = temperature(:,:)
+                  waterFracPostAdv4(:,:) = waterFrac(:,:)
+               endif
+               if (config_calculate_damage) then
+                  call mpas_pool_get_array(geometryPool, 'damage', damage)
+                  do iCell = 1, nCells
+                     damage3dPostAdv4(:,iCell) = damage(iCell)
+                  enddo
+               endif
+               do iCell = 1, nCells
+                  do k = 1, nVertLevels
+                     passiveTracer3dPostAdv4(k,iCell) = passiveTracer2d(iCell)
+                  enddo
+               enddo
+            endif
+         endif
+
          ! If using SSP RK, then update thickness and tracers incrementally.
          ! For first RK stage, thickness and tracer updates above are sufficient.
          ! Likewise, for the 4-stage SSP RK3 the last stage is just a forward euler update.
-         if ( (rkStage > 1) .and. (rkStage < 4) )  then
+         ! For SSP RK(5,4): stages 1-4 use the standard 2-source blend;
+         ! stage 5 uses a separate three-way blend (handled below).
+         if ( (rkStage > 1) .and. (rkStage < nRKstages) )  then
             call mpas_pool_get_array(geometryPool, 'thickness', thickness)
             call mpas_pool_get_array(geometryPool, 'layerThickness', layerThickness)
             call mpas_pool_get_array(geometryPool, 'passiveTracer2d', passiveTracer2d)
@@ -486,7 +613,80 @@ module li_time_integration_fe_rk
             enddo
 
          endif
-       
+
+         ! SSP RK(5,4) stage 5 three-way blend:
+         !   u^5 = d5*u^n + P51*(postAdv after stg 2) + P53*(postAdv after stg 4)
+         !         + P54*(current postAdv from stg 5 input)
+         ! where the "current postAdv" is what was just computed by advection_solver
+         ! (stored in the pool arrays at this point) and the saved snapshots are
+         ! layerThicknessPostAdv2/4 (etc.).
+         if (isSPRK54 .and. rkStage == nRKstages) then
+            call mpas_pool_get_array(geometryPool, 'thickness', thickness)
+            call mpas_pool_get_array(geometryPool, 'layerThickness', layerThickness)
+            call mpas_pool_get_array(geometryPool, 'passiveTracer2d', passiveTracer2d)
+            call mpas_pool_get_array(thermalPool, 'temperature', temperature)
+            call mpas_pool_get_array(thermalPool, 'waterFrac', waterFrac)
+
+            layerThicknessTmp(:,:) = layerThickness(:,:)
+            layerThickness(:,:) = rkSSPweights(nRKstages) * layerThicknessPrev(:,:) + &
+                                   rkSSPweights54stage5(1) * layerThicknessPostAdv2(:,:) + &
+                                   rkSSPweights54stage5(2) * layerThicknessPostAdv4(:,:) + &
+                                   rkSSPweights54stage5(3) * layerThicknessTmp(:,:)
+            thickness = sum(layerThickness, 1)
+
+            if (trim(config_thermal_solver) .ne. 'none') then
+               do iCell = 1, nCells
+                  do k = 1, nVertLevels
+                     if (layerThickness(k,iCell) > 0.0_RKIND) then
+                        temperature(k,iCell) = ( rkSSPweights(nRKstages) * temperaturePrev(k,iCell) * layerThicknessPrev(k,iCell) + &
+                                               rkSSPweights54stage5(1) * temperaturePostAdv2(k,iCell) * layerThicknessPostAdv2(k,iCell) + &
+                                               rkSSPweights54stage5(2) * temperaturePostAdv4(k,iCell) * layerThicknessPostAdv4(k,iCell) + &
+                                               rkSSPweights54stage5(3) * temperature(k,iCell) * layerThicknessTmp(k,iCell) ) &
+                                              / layerThickness(k,iCell)
+                        waterFrac(k,iCell) = ( rkSSPweights(nRKstages) * waterFracPrev(k,iCell) * layerThicknessPrev(k,iCell) + &
+                                             rkSSPweights54stage5(1) * waterFracPostAdv2(k,iCell) * layerThicknessPostAdv2(k,iCell) + &
+                                             rkSSPweights54stage5(2) * waterFracPostAdv4(k,iCell) * layerThicknessPostAdv4(k,iCell) + &
+                                             rkSSPweights54stage5(3) * waterFrac(k,iCell) * layerThicknessTmp(k,iCell) ) &
+                                            / layerThickness(k,iCell)
+                     endif
+                  enddo
+               enddo
+            endif
+
+            if (config_calculate_damage) then
+               call mpas_pool_get_array(geometryPool, 'damage', damage)
+               do iCell = 1, nCells
+                  do k = 1, nVertLevels
+                     if (layerThickness(k,iCell) > 0.0_RKIND) then
+                        damage3d(k,iCell) = ( rkSSPweights(nRKstages) * damage3dPrev(k,iCell) * layerThicknessPrev(k,iCell) + &
+                                             rkSSPweights54stage5(1) * damage3dPostAdv2(k,iCell) * layerThicknessPostAdv2(k,iCell) + &
+                                             rkSSPweights54stage5(2) * damage3dPostAdv4(k,iCell) * layerThicknessPostAdv4(k,iCell) + &
+                                             rkSSPweights54stage5(3) * damage(iCell) * layerThicknessTmp(k,iCell) ) &
+                                            / layerThickness(k,iCell)
+                     else
+                        damage3d(k,iCell) = 0.0_RKIND
+                     endif
+                  enddo
+                  damage(iCell) = sum(damage3d(:, iCell) * layerThicknessFractions)
+               enddo
+            endif
+
+            do iCell = 1, nCells
+               do k = 1, nVertLevels
+                  if (layerThickness(k,iCell) > 0.0_RKIND) then
+                     passiveTracer3d(k,iCell) = ( rkSSPweights(nRKstages) * passiveTracer3dPrev(k,iCell) * layerThicknessPrev(k,iCell) + &
+                                                  rkSSPweights54stage5(1) * passiveTracer3dPostAdv2(k,iCell) * layerThicknessPostAdv2(k,iCell) + &
+                                                  rkSSPweights54stage5(2) * passiveTracer3dPostAdv4(k,iCell) * layerThicknessPostAdv4(k,iCell) + &
+                                                  rkSSPweights54stage5(3) * passiveTracer2d(iCell) * layerThicknessTmp(k,iCell) ) &
+                                                 / layerThickness(k,iCell)
+                  else
+                     passiveTracer3d(k,iCell) = 0.0_RKIND
+                  endif
+               enddo
+               passiveTracer2d(iCell) = sum(passiveTracer3d(:,iCell) * layerThicknessFractions)
+            enddo
+         endif
+
          ! === Ensure damage is within bounds before velocity solve ===
          if ( config_finalize_damage_after_advection ) then
              call mpas_timer_start("finalize damage")
@@ -672,6 +872,19 @@ module li_time_integration_fe_rk
       deallocate(fluxAcrossGroundingLineAccum)
       deallocate(fluxAcrossGroundingLineOnCellsAccum)
       deallocate(calvingThicknessAccum)
+
+      if (isSPRK54) then
+         deallocate(layerThicknessPostAdv2)
+         deallocate(layerThicknessPostAdv4)
+         deallocate(temperaturePostAdv2)
+         deallocate(temperaturePostAdv4)
+         deallocate(waterFracPostAdv2)
+         deallocate(waterFracPostAdv4)
+         deallocate(damage3dPostAdv2)
+         deallocate(damage3dPostAdv4)
+         deallocate(passiveTracer3dPostAdv2)
+         deallocate(passiveTracer3dPostAdv4)
+      endif
    !--------------------------------------------------------------------
    end subroutine li_time_integrator_forwardeuler_rungekutta
 
@@ -871,6 +1084,13 @@ module li_time_integration_fe_rk
          (config_rk_order == 3) .and. (config_rk3_stages == 4) ) then
           allowableAdvecDtOnProc = allowableAdvecDtOnProc * 2.0_RKIND
           allowableDiffDtOnProc = allowableDiffDtOnProc * 2.0_RKIND
+      endif
+
+      ! If using 5-stage SSP RK(5,4), CFL coefficient of ~1.5082 is theoretically allowed
+      if ( (trim(config_time_integration) == 'runge_kutta') .and. &
+         (config_rk_order == 4) ) then
+          allowableAdvecDtOnProc = allowableAdvecDtOnProc * 1.508180045921066_RKIND
+          allowableDiffDtOnProc = allowableDiffDtOnProc * 1.508180045921066_RKIND
       endif
 
       ! Local advective CFL info
