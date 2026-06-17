@@ -33,6 +33,7 @@ module li_velocity_gnn
    use mpas_pool_routines
    use mpas_dmpar
    use mpas_log
+   use mpi
 
    use li_setup
    use li_mask
