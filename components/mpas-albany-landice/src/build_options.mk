@@ -50,6 +50,20 @@ ifeq "$(SLM)" "true"
     override CPPFLAGS += -DUSE_SEALEVELMODEL
 endif
 
+# Optional FTorch for GNN velocity emulator
+ifeq "$(FTORCH)" "true"
+ifndef FTORCH_ROOT
+$(error FTORCH_ROOT is not set.  Please set FTORCH_ROOT to the FTorch install directory when FTORCH=true)
+endif
+ifndef LIBTORCH_ROOT
+$(error LIBTORCH_ROOT is not set.  Please set LIBTORCH_ROOT to the LibTorch install directory when FTORCH=true)
+endif
+	override CPPFLAGS += -DUSE_FTORCH
+	FCINCLUDES += -I$(FTORCH_ROOT)/include/ftorch
+	LIBS += -Wl,-rpath,$(FTORCH_ROOT)/lib64 -L$(FTORCH_ROOT)/lib64 -lftorch
+	LIBS += -Wl,-rpath,$(LIBTORCH_ROOT)/lib -L$(LIBTORCH_ROOT)/lib -ltorch -ltorch_cpu -lc10 -lstdc++
+endif
+
 # ===================================
 report_builds:
 	@echo "CORE=landice"
