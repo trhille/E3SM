@@ -30,6 +30,7 @@ module li_velocity
 
    use li_velocity_external
    use li_velocity_simple
+   use li_velocity_gnn
    use li_sia
    use li_setup
 
@@ -120,6 +121,8 @@ contains
           call li_sia_init(domain, err)
       case ('simple')
           call li_velocity_simple_init(domain, err)
+      case ('gnn')
+          call li_velocity_gnn_init(domain, err)
       case ('L1L2', 'FO', 'Stokes')
           call li_velocity_external_init(domain, err)
       case default
@@ -193,6 +196,8 @@ contains
           call li_sia_block_init(block, err)
       case ('simple')
           call li_velocity_simple_block_init(block, err)
+      case ('gnn')
+          ! No block-level init needed for GNN solver
       case ('L1L2', 'FO', 'Stokes')
           call li_velocity_external_block_init(block, err)
       case default
@@ -518,6 +523,10 @@ contains
                endif
             enddo
 
+        case('gnn')
+
+            call li_velocity_gnn_solve(domain, err_tmp)
+
         case default
 
              call mpas_log_write(trim(config_velocity_solver) // ' is not a valid land ice velocity solver option.', MPAS_LOG_ERR)
@@ -750,6 +759,8 @@ contains
           call li_sia_finalize(domain, err)
       case ('simple')
           call li_velocity_simple_finalize(err)
+      case ('gnn')
+          call li_velocity_gnn_finalize(err)
       case ('L1L2', 'FO', 'Stokes')
           call li_velocity_external_finalize(err)
       case default

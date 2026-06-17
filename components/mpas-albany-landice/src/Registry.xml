@@ -65,8 +65,16 @@
 
 	<nml_record name="velocity_solver" in_defaults="true">
 		<nml_option name="config_velocity_solver" type="character" default_value="sia" units="unitless"
-		            description="Selection of the method for solving ice velocity. 'L1L2', 'FO', and 'Stokes' require compiling with external dycores. 'none' skips the calculation of velocity so the velocity field will be 0 or set to a field read from an input file.  'simple' gives a simple prescribed velocity field computed at initialization."
-		            possible_values="'sia', 'L1L2', 'FO', 'Stokes', 'simple', 'none'"
+		            description="Selection of the method for solving ice velocity. 'L1L2', 'FO', and 'Stokes' require compiling with external dycores. 'gnn' uses a GNN emulator via FTorch. 'none' skips the calculation of velocity so the velocity field will be 0 or set to a field read from an input file.  'simple' gives a simple prescribed velocity field computed at initialization."
+		            possible_values="'sia', 'L1L2', 'FO', 'Stokes', 'gnn', 'simple', 'none'"
+		/>
+		<nml_option name="config_gnn_model_path" type="character" default_value="gnn_velocity_model.pt" units="unitless"
+		            description="Path to the TorchScript GNN model file for the 'gnn' velocity solver."
+		            possible_values="Any valid file path."
+		/>
+		<nml_option name="config_gnn_device_type" type="character" default_value="cpu" units="unitless"
+		            description="Device type for GNN inference. 'cpu' or 'cuda'."
+		            possible_values="'cpu', 'cuda'"
 		/>
 		<nml_option name="config_sia_tangent_slope_calculation" type="character" default_value="from_vertex_barycentric" units="unitless"
 		            description="Selection of the method for calculating the tangent component of surface slope at edges needed by the SIA velocity solver.
