@@ -67,7 +67,7 @@ module li_velocity_gnn
    integer, save :: ftorch_device_type
 
    ! Number of input features
-   integer, parameter :: nFeatures = 9
+   integer, parameter :: nFeatures = 11
 
    logical, save :: gnn_initialized = .false.
 
@@ -245,6 +245,7 @@ contains
       integer, dimension(:), pointer :: cellMask, indexToCellID
       integer, dimension(:,:), pointer :: cellsOnEdge
       real (kind=RKIND), dimension(:), pointer :: areaCell, thickness, bedTopography
+      real (kind=RKIND), dimension(:), pointer :: xCell, yCell
       real (kind=RKIND), dimension(:), pointer :: muFriction, stiffnessFactor
       real (kind=RKIND), dimension(:,:), pointer :: temperature
       real (kind=RKIND), dimension(:), pointer :: basalTemperature
@@ -301,6 +302,8 @@ contains
 
       ! Get mesh arrays
       call mpas_pool_get_array(meshPool, 'areaCell', areaCell)
+      call mpas_pool_get_array(meshPool, 'xCell', xCell)
+      call mpas_pool_get_array(meshPool, 'yCell', yCell)
       call mpas_pool_get_array(meshPool, 'cellsOnEdge', cellsOnEdge)
       call mpas_pool_get_array(meshPool, 'edgeNormalVectors', edgeNormalVectors)
       call mpas_pool_get_array(meshPool, 'layerThicknessFractions', layerThicknessFractions)
@@ -330,47 +333,53 @@ contains
       ! --- Assemble local node features ---
       allocate(local_features(nLocalOwned, nFeatures))
       do iCell = 1, nLocalOwned
-         ! Feature 1: areaCell
-         local_features(iCell, 1) = areaCell(iCell)
+         ! Feature 1: xCell (km)
+         local_features(iCell, 1) = xCell(iCell) / 1000.0_RKIND
 
-         ! Feature 2: depth-averaged temperature
+         ! Feature 2: yCell (km)
+         local_features(iCell, 2) = yCell(iCell) / 1000.0_RKIND
+
+         ! Feature 3: areaCell (km^2)
+         local_features(iCell, 3) = areaCell(iCell) / 1.0e6_RKIND
+
+         ! Feature 4: thickness (km)
+         local_features(iCell, 4) = thickness(iCell) / 1000.0_RKIND
+
+         ! Feature 5: bedTopography (km)
+         local_features(iCell, 5) = bedTopography(iCell) / 1000.0_RKIND
+
+         ! Feature 6: log10(muFriction)
+         if (muFriction(iCell) > 0.0_RKIND) then
+            local_features(iCell, 6) = log10(muFriction(iCell))
+         else
+            local_features(iCell, 6) = 0.0_RKIND
+         endif
+
+         ! Feature 7: basalTemperature (°C)
+         local_features(iCell, 7) = basalTemperature(iCell) - kelvin_to_celsius
+
+         ! Feature 8: depth-averaged temperature (°C)
          depthAvgTemp = 0.0_RKIND
          do k = 1, nVertLevels
             depthAvgTemp = depthAvgTemp + temperature(k, iCell) * layerThicknessFractions(k)
          end do
-         local_features(iCell, 2) = depthAvgTemp
-
-         ! Feature 3: basal temperature
-         local_features(iCell, 3) = basalTemperature(iCell)
-
-         ! Feature 4: log10(muFriction)
-         if (muFriction(iCell) > 0.0_RKIND) then
-            local_features(iCell, 4) = log10(muFriction(iCell))
-         else
-            local_features(iCell, 4) = 0.0_RKIND
-         endif
-
-         ! Feature 5: thickness
-         local_features(iCell, 5) = thickness(iCell)
-
-         ! Feature 6: bedTopography
-         local_features(iCell, 6) = bedTopography(iCell)
-
-         ! Feature 7: thickness above floatation
-         thicknessAboveFloatation = thickness(iCell) - &
-            max(0.0_RKIND, (config_sea_level - bedTopography(iCell)) * &
-                config_ocean_density / config_ice_density)
-         local_features(iCell, 7) = thicknessAboveFloatation
-
-         ! Feature 8: floating ice mask (1.0 if floating, 0.0 otherwise)
-         if (li_mask_is_floating_ice(cellMask(iCell))) then
-            local_features(iCell, 8) = 1.0_RKIND
-         else
-            local_features(iCell, 8) = 0.0_RKIND
-         endif
+         local_features(iCell, 8) = depthAvgTemp - kelvin_to_celsius
 
          ! Feature 9: stiffnessFactor
          local_features(iCell, 9) = stiffnessFactor(iCell)
+
+         ! Feature 10: thicknessAboveFloatation (km)
+         thicknessAboveFloatation = thickness(iCell) - &
+            max(0.0_RKIND, (config_sea_level - bedTopography(iCell)) * &
+                config_ocean_density / config_ice_density)
+         local_features(iCell, 10) = thicknessAboveFloatation / 1000.0_RKIND
+
+         ! Feature 11: floatMask (1.0 if floating, 0.0 otherwise)
+         if (li_mask_is_floating_ice(cellMask(iCell))) then
+            local_features(iCell, 11) = 1.0_RKIND
+         else
+            local_features(iCell, 11) = 0.0_RKIND
+         endif
       end do
 
       ! --- MPI Gather features to rank 0 ---
@@ -410,10 +419,11 @@ contains
                                        recvcounts, displs, domain % dminfo % comm, myRank)
 
       ! --- Fill uReconstructX/Y with uniform vertical profile ---
+      ! GNN predicts in km/yr; convert to m/s
       do iCell = 1, nLocalOwned
          do k = 1, nVertInterfacesLocal
-            uReconstructX(k, iCell) = local_velocity(iCell, 1)
-            uReconstructY(k, iCell) = local_velocity(iCell, 2)
+            uReconstructX(k, iCell) = local_velocity(iCell, 1) * 1000.0_RKIND / scyr
+            uReconstructY(k, iCell) = local_velocity(iCell, 2) * 1000.0_RKIND / scyr
          end do
       end do
 
