@@ -38,6 +38,8 @@ module li_velocity_gnn
    use li_setup
    use li_mask
    use li_constants
+   use ieee_arithmetic
+   use ieee_exceptions
 
    implicit none
    private
@@ -291,6 +293,7 @@ contains
       real (kind=RKIND) :: xVelEdge, yVelEdge
       real (kind=RKIND) :: thicknessAboveFloatation, depthAvgTemp
       integer, pointer :: nVertLevels
+      logical :: fpe_invalid, fpe_divzero, fpe_overflow  ! saved FPE trap state
 
       err = 0
 
@@ -477,6 +480,15 @@ contains
 
          ! Build tensors and run inference
          allocate(ice_velocity(nIceCells, 2))
+
+         ! Disable FPE traps around LibTorch call (LibTorch triggers them internally)
+         call ieee_get_halting_mode(ieee_invalid, fpe_invalid)
+         call ieee_get_halting_mode(ieee_divide_by_zero, fpe_divzero)
+         call ieee_get_halting_mode(ieee_overflow, fpe_overflow)
+         call ieee_set_halting_mode(ieee_invalid, .false.)
+         call ieee_set_halting_mode(ieee_divide_by_zero, .false.)
+         call ieee_set_halting_mode(ieee_overflow, .false.)
+
          call torch_tensor_from_array(in_tensors(1), ice_features, ftorch_device_type)
          call torch_tensor_from_array(in_tensors(2), ice_edge_index, ftorch_device_type)
          call torch_tensor_from_array(in_tensors(3), ice_batch, ftorch_device_type)
@@ -486,6 +498,11 @@ contains
 
          call torch_delete(in_tensors)
          call torch_delete(out_tensors)
+
+         ! Restore FPE traps
+         call ieee_set_halting_mode(ieee_invalid, fpe_invalid)
+         call ieee_set_halting_mode(ieee_divide_by_zero, fpe_divzero)
+         call ieee_set_halting_mode(ieee_overflow, fpe_overflow)
 
          ! Map ice velocities back to global array
          do iCell = 1, nCellsGlobal
