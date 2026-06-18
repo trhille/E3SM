@@ -489,10 +489,6 @@ contains
          ! Build tensors and run inference
          allocate(ice_velocity(nIceCells, 2))
 
-         ! Dump GNN inputs for debugging BEFORE inference (first solve call only)
-         call dump_gnn_debug(ice_features, ice_edge_index, ice_velocity, &
-                             nIceCells, nFeatures, nIceEdgesDirected)
-
          ! Disable FPE traps around LibTorch call (LibTorch triggers them internally)
          call ieee_get_halting_mode(ieee_invalid, fpe_invalid)
          call ieee_get_halting_mode(ieee_divide_by_zero, fpe_divzero)
@@ -526,6 +522,15 @@ contains
 
          call mpas_log_write('GNN inference: $i ice cells, $i directed ice edges', &
               intArgs=(/nIceCells, nIceEdgesDirected/))
+         call mpas_log_write('GNN velocity stats (km/yr): vx min=$r max=$r, vy min=$r max=$r', &
+              realArgs=(/dble(minval(ice_velocity(:,1))), dble(maxval(ice_velocity(:,1))), &
+                         dble(minval(ice_velocity(:,2))), dble(maxval(ice_velocity(:,2)))/))
+         call mpas_log_write('GNN velocity cell 1: vx=$r vy=$r (km/yr)', &
+              realArgs=(/dble(ice_velocity(1,1)), dble(ice_velocity(1,2))/))
+
+         ! Dump GNN inputs/outputs as text for debugging (first solve call only)
+         call dump_gnn_debug(ice_features, ice_edge_index, ice_velocity, &
+                             nIceCells, nFeatures, nIceEdgesDirected)
 
          deallocate(ice_map, ice_features, ice_velocity, ice_edge_index, ice_batch)
       endif
@@ -716,44 +721,34 @@ contains
       if (dumped) return
       dumped = .true.
 
-      call mpas_log_write('Dumping GNN debug files: nCells=$i, nFeat=$i, nEdges=$i', &
+      call mpas_log_write('Dumping GNN debug text files: nCells=$i, nFeat=$i, nEdges=$i', &
            intArgs=(/nCells, nFeat, nEdges/))
-      call mpas_log_write('  features array shape: $i x $i', &
-           intArgs=(/size(features,1), size(features,2)/))
-      call mpas_log_write('  edge_index array shape: $i x $i', &
-           intArgs=(/size(edge_index,1), size(edge_index,2)/))
 
-      open(newunit=iu, file='gnn_debug_features.bin', form='unformatted', &
-           access='stream', status='replace', iostat=ios)
-      call mpas_log_write('  features open iostat=$i, unit=$i', intArgs=(/ios, iu/))
-      write(iu) features(1:nCells, 1:nFeat)
-      close(iu)
-
-      open(newunit=iu, file='gnn_debug_edge_index.bin', form='unformatted', &
-           access='stream', status='replace', iostat=ios)
-      call mpas_log_write('  edge_index open iostat=$i, unit=$i', intArgs=(/ios, iu/))
-      write(iu) edge_index(1:2, 1:nEdges)
-      close(iu)
-
-      open(newunit=iu, file='gnn_debug_velocity.bin', form='unformatted', &
-           access='stream', status='replace', iostat=ios)
-      call mpas_log_write('  velocity open iostat=$i, unit=$i', intArgs=(/ios, iu/))
-      write(iu) velocity(1:nCells, 1:2)
-      close(iu)
-
-      ! Write text file with first 5 rows for verification
-      open(newunit=iu, file='gnn_debug_check.txt', status='replace', iostat=ios)
-      write(iu, '(A)') '# First 5 rows of features (11 cols):'
-      do i = 1, min(5, nCells)
+      ! Write all features as text (formatted I/O known to work)
+      open(newunit=iu, file='gnn_debug_features.txt', status='replace', iostat=ios)
+      write(iu, '(A,I8,A,I3)') '# nCells=', nCells, ' nFeat=', nFeat
+      do i = 1, nCells
          write(iu, '(11(ES15.7,1X))') features(i, 1:nFeat)
       end do
-      write(iu, '(A)') '# First 5 edge pairs:'
-      do i = 1, min(5, nEdges)
+      close(iu)
+
+      ! Write all edge pairs as text
+      open(newunit=iu, file='gnn_debug_edges.txt', status='replace', iostat=ios)
+      write(iu, '(A,I10)') '# nEdges=', nEdges
+      do i = 1, nEdges
          write(iu, '(2(I10,1X))') edge_index(1, i), edge_index(2, i)
       end do
       close(iu)
 
-      call mpas_log_write('GNN debug files written.')
+      ! Write all velocities as text
+      open(newunit=iu, file='gnn_debug_velocity.txt', status='replace', iostat=ios)
+      write(iu, '(A,I8)') '# nCells=', nCells
+      do i = 1, nCells
+         write(iu, '(2(ES15.7,1X))') velocity(i, 1), velocity(i, 2)
+      end do
+      close(iu)
+
+      call mpas_log_write('GNN debug text files written.')
 
    end subroutine dump_gnn_debug
 
