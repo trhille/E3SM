@@ -53,13 +53,13 @@ module li_velocity_gnn
    type(torch_model), save :: gnn_model
 #endif
 
-   ! Global edge_index for the GNN (0-based, bidirectional)
-   integer(kind=8), dimension(:,:), allocatable, target, save :: global_edge_index
+   ! Global undirected edge pairs (0-based cell indices, built once in init)
+   integer, dimension(:,:), allocatable, save :: global_edge_pairs
+   integer, save :: nUndirectedEdgesGlobal  ! number of undirected edges
 
    ! MPI gather/scatter bookkeeping
    integer, save :: nCellsGlobal          ! total number of cells across all ranks
    integer, save :: nLocalOwned           ! nCellsSolve on this rank
-   integer, save :: nDirectedEdgesGlobal  ! number of directed edges in global_edge_index
    integer, allocatable, save :: recvcounts(:)  ! number of owned cells per rank
    integer, allocatable, save :: displs(:)      ! displacements for gatherv/scatterv
 
@@ -187,30 +187,23 @@ contains
                        all_edges_flat, edgecounts, edgedispls, MPI_INTEGER, &
                        0, domain % dminfo % comm, err)
 
-      ! On rank 0, build bidirectional edge_index with 0-based indexing
+      ! On rank 0, store undirected edge pairs with 0-based indexing
       if (myRank == 0) then
-         nDirectedEdgesGlobal = nEdgesAll * 2
-         allocate(global_edge_index(2, nDirectedEdgesGlobal))
-         idx = 0
-         do i = 1, nEdgesAll
-            ! Forward direction
-            idx = idx + 1
-            global_edge_index(1, idx) = all_edges_flat((i-1)*2 + 1) - 1  ! 0-based
-            global_edge_index(2, idx) = all_edges_flat((i-1)*2 + 2) - 1  ! 0-based
-            ! Reverse direction
-            idx = idx + 1
-            global_edge_index(1, idx) = all_edges_flat((i-1)*2 + 2) - 1  ! 0-based
-            global_edge_index(2, idx) = all_edges_flat((i-1)*2 + 1) - 1  ! 0-based
+         nUndirectedEdgesGlobal = nEdgesAll
+         allocate(global_edge_pairs(2, nUndirectedEdgesGlobal))
+         do i = 1, nUndirectedEdgesGlobal
+            global_edge_pairs(1, i) = all_edges_flat((i-1)*2 + 1) - 1  ! 0-based
+            global_edge_pairs(2, i) = all_edges_flat((i-1)*2 + 2) - 1  ! 0-based
          end do
       else
-         nDirectedEdgesGlobal = 0
-         allocate(global_edge_index(2, 1))  ! placeholder
+         nUndirectedEdgesGlobal = 0
+         allocate(global_edge_pairs(2, 1))  ! placeholder
       endif
 
       deallocate(local_edges, edgecounts, edgedispls, all_edges_flat)
 
-      ! Broadcast nDirectedEdgesGlobal to all ranks (needed for consistency)
-      call MPI_Bcast(nDirectedEdgesGlobal, 1, MPI_INTEGER, 0, domain % dminfo % comm, err)
+      ! Broadcast nUndirectedEdgesGlobal to all ranks (needed for consistency)
+      call MPI_Bcast(nUndirectedEdgesGlobal, 1, MPI_INTEGER, 0, domain % dminfo % comm, err)
 
       ! --- Load the TorchScript model on rank 0 ---
       if (myRank == 0) then
@@ -220,12 +213,12 @@ contains
 
       gnn_initialized = .true.
       call mpas_log_write('GNN velocity solver initialized.')
-      call mpas_log_write('  Global cells: $i, Directed edges: $i', &
-           intArgs=(/nCellsGlobal, nDirectedEdgesGlobal/))
+      call mpas_log_write('  Global cells: $i, Undirected edges: $i', &
+           intArgs=(/nCellsGlobal, nUndirectedEdgesGlobal/))
       if (myRank == 0) then
          call mpas_log_write('nCellsGlobal: $i', intArgs=(/nCellsGlobal/))
-         call mpas_log_write('edge_index min: $i', intArgs=(/int(minval(global_edge_index))/))
-         call mpas_log_write('edge_index max: $i', intArgs=(/int(maxval(global_edge_index))/))
+         call mpas_log_write('edge_pairs min: $i', intArgs=(/minval(global_edge_pairs)/))
+         call mpas_log_write('edge_pairs max: $i', intArgs=(/maxval(global_edge_pairs)/))
       endif
 
 #else
@@ -277,16 +270,23 @@ contains
       real (kind=RKIND), allocatable :: local_velocity(:,:)  ! (nLocalOwned, 2)
 
       ! Global arrays on rank 0
-      real (kind=RKIND), allocatable, target :: global_features(:,:)   ! (nCellsGlobal, nFeatures)
-      real (kind=RKIND), allocatable, target :: global_velocity(:,:)   ! (nCellsGlobal, 2)
-      integer(kind=8), allocatable, target :: global_batch(:)          ! (nCellsGlobal) all zeros
+      real (kind=RKIND), allocatable :: global_features(:,:)   ! (nCellsGlobal, nFeatures)
+      real (kind=RKIND), allocatable :: global_velocity(:,:)   ! (nCellsGlobal, 2)
+
+      ! Ice-only subgraph arrays (rank 0 only)
+      integer, allocatable :: ice_map(:)                                ! maps global index to compact ice index
+      integer :: nIceCells, nIceEdgesUndirected, nIceEdgesDirected
+      real (kind=RKIND), allocatable, target :: ice_features(:,:)       ! (nIceCells, nFeatures)
+      real (kind=RKIND), allocatable, target :: ice_velocity(:,:)       ! (nIceCells, 2)
+      integer(kind=8), allocatable, target :: ice_edge_index(:,:)       ! (2, nIceEdgesDirected)
+      integer(kind=8), allocatable, target :: ice_batch(:)              ! (nIceCells)
 
 #ifdef USE_FTORCH
       type(torch_tensor), dimension(3) :: in_tensors
       type(torch_tensor), dimension(1) :: out_tensors
 #endif
 
-      integer :: iCell, iEdge, k, myRank, cell1, cell2
+      integer :: iCell, iEdge, i, idx, k, myRank, cell1, cell2, c1, c2
       integer :: nVertInterfacesLocal
       real (kind=RKIND) :: xVelEdge, yVelEdge
       real (kind=RKIND) :: thicknessAboveFloatation, depthAvgTemp
@@ -403,12 +403,10 @@ contains
       if (myRank == 0) then
          allocate(global_features(nCellsGlobal, nFeatures))
          allocate(global_velocity(nCellsGlobal, 2))
-         allocate(global_batch(nCellsGlobal))
-         global_batch(:) = 0  ! single graph: all nodes belong to batch 0
+         global_velocity(:,:) = 0.0_RKIND  ! zero velocity for non-ice cells
       else
          allocate(global_features(1, 1))  ! placeholder
          allocate(global_velocity(1, 1))  ! placeholder
-         allocate(global_batch(1))        ! placeholder
       endif
 
       ! Gather each feature column separately to handle Fortran column-major layout
@@ -416,17 +414,91 @@ contains
                                     nLocalOwned, nCellsGlobal, nFeatures, &
                                     recvcounts, displs, domain % dminfo % comm, myRank)
 
-      ! --- Run inference on rank 0 ---
+      ! --- Filter to ice-only cells and run inference on rank 0 ---
       if (myRank == 0) then
-         call torch_tensor_from_array(in_tensors(1), global_features, ftorch_device_type)
-         call torch_tensor_from_array(in_tensors(2), global_edge_index, ftorch_device_type)
-         call torch_tensor_from_array(in_tensors(3), global_batch, ftorch_device_type)
-         call torch_tensor_from_array(out_tensors(1), global_velocity, torch_kCPU)
+         ! Identify ice cells (thickness > 0, feature 4)
+         allocate(ice_map(nCellsGlobal))
+         nIceCells = 0
+         do iCell = 1, nCellsGlobal
+            if (global_features(iCell, 4) > 0.0_RKIND) then  ! thickness in km
+               nIceCells = nIceCells + 1
+               ice_map(iCell) = nIceCells - 1  ! 0-based compact index
+            else
+               ice_map(iCell) = -1
+            endif
+         end do
+
+         ! Build ice-only features
+         allocate(ice_features(nIceCells, nFeatures))
+         idx = 0
+         do iCell = 1, nCellsGlobal
+            if (ice_map(iCell) >= 0) then
+               idx = idx + 1
+               ice_features(idx, :) = global_features(iCell, :)
+            endif
+         end do
+
+         ! Build ice-only bidirectional edge_index
+         ! First count edges where both endpoints have ice
+         nIceEdgesUndirected = 0
+         do i = 1, nUndirectedEdgesGlobal
+            c1 = global_edge_pairs(1, i) + 1  ! 1-based for ice_map lookup
+            c2 = global_edge_pairs(2, i) + 1
+            if (c1 >= 1 .and. c1 <= nCellsGlobal .and. &
+                c2 >= 1 .and. c2 <= nCellsGlobal) then
+               if (ice_map(c1) >= 0 .and. ice_map(c2) >= 0) then
+                  nIceEdgesUndirected = nIceEdgesUndirected + 1
+               endif
+            endif
+         end do
+
+         nIceEdgesDirected = nIceEdgesUndirected * 2
+         allocate(ice_edge_index(2, nIceEdgesDirected))
+         idx = 0
+         do i = 1, nUndirectedEdgesGlobal
+            c1 = global_edge_pairs(1, i) + 1
+            c2 = global_edge_pairs(2, i) + 1
+            if (c1 >= 1 .and. c1 <= nCellsGlobal .and. &
+                c2 >= 1 .and. c2 <= nCellsGlobal) then
+               if (ice_map(c1) >= 0 .and. ice_map(c2) >= 0) then
+                  idx = idx + 1
+                  ice_edge_index(1, idx) = ice_map(c1)
+                  ice_edge_index(2, idx) = ice_map(c2)
+                  idx = idx + 1
+                  ice_edge_index(1, idx) = ice_map(c2)
+                  ice_edge_index(2, idx) = ice_map(c1)
+               endif
+            endif
+         end do
+
+         ! Build batch tensor
+         allocate(ice_batch(nIceCells))
+         ice_batch(:) = 0
+
+         ! Build tensors and run inference
+         allocate(ice_velocity(nIceCells, 2))
+         call torch_tensor_from_array(in_tensors(1), ice_features, ftorch_device_type)
+         call torch_tensor_from_array(in_tensors(2), ice_edge_index, ftorch_device_type)
+         call torch_tensor_from_array(in_tensors(3), ice_batch, ftorch_device_type)
+         call torch_tensor_from_array(out_tensors(1), ice_velocity, torch_kCPU)
 
          call torch_model_forward(gnn_model, in_tensors, out_tensors)
 
          call torch_delete(in_tensors)
          call torch_delete(out_tensors)
+
+         ! Map ice velocities back to global array
+         do iCell = 1, nCellsGlobal
+            if (ice_map(iCell) >= 0) then
+               global_velocity(iCell, 1) = ice_velocity(ice_map(iCell) + 1, 1)
+               global_velocity(iCell, 2) = ice_velocity(ice_map(iCell) + 1, 2)
+            endif
+         end do
+
+         call mpas_log_write('GNN inference: $i ice cells, $i directed ice edges', &
+              intArgs=(/nIceCells, nIceEdgesDirected/))
+
+         deallocate(ice_map, ice_features, ice_velocity, ice_edge_index, ice_batch)
       endif
 
       ! --- Scatter predicted velocities back to all ranks ---
@@ -457,7 +529,7 @@ contains
       end do
 
       ! Clean up
-      deallocate(local_features, local_velocity, global_features, global_velocity, global_batch)
+      deallocate(local_features, local_velocity, global_features, global_velocity)
 
 #else
       call mpas_log_write('GNN velocity solver requires compilation with USE_FTORCH.', MPAS_LOG_CRIT)
@@ -488,7 +560,7 @@ contains
 #ifdef USE_FTORCH
       if (gnn_initialized) then
          call torch_delete(gnn_model)
-         if (allocated(global_edge_index)) deallocate(global_edge_index)
+         if (allocated(global_edge_pairs)) deallocate(global_edge_pairs)
          if (allocated(recvcounts)) deallocate(recvcounts)
          if (allocated(displs)) deallocate(displs)
          gnn_initialized = .false.
