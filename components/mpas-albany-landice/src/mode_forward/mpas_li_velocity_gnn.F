@@ -261,9 +261,10 @@ contains
       ! Global arrays on rank 0
       real (kind=RKIND), allocatable, target :: global_features(:,:)   ! (nCellsGlobal, nFeatures)
       real (kind=RKIND), allocatable, target :: global_velocity(:,:)   ! (nCellsGlobal, 2)
+      integer(kind=8), allocatable, target :: global_batch(:)          ! (nCellsGlobal) all zeros
 
 #ifdef USE_FTORCH
-      type(torch_tensor), dimension(2) :: in_tensors
+      type(torch_tensor), dimension(3) :: in_tensors
       type(torch_tensor), dimension(1) :: out_tensors
 #endif
 
@@ -376,9 +377,12 @@ contains
       if (myRank == 0) then
          allocate(global_features(nCellsGlobal, nFeatures))
          allocate(global_velocity(nCellsGlobal, 2))
+         allocate(global_batch(nCellsGlobal))
+         global_batch(:) = 0  ! single graph: all nodes belong to batch 0
       else
          allocate(global_features(1, 1))  ! placeholder
          allocate(global_velocity(1, 1))  ! placeholder
+         allocate(global_batch(1))        ! placeholder
       endif
 
       ! Gather each feature column separately to handle Fortran column-major layout
@@ -390,6 +394,7 @@ contains
       if (myRank == 0) then
          call torch_tensor_from_array(in_tensors(1), global_features, ftorch_device_type)
          call torch_tensor_from_array(in_tensors(2), global_edge_index, ftorch_device_type)
+         call torch_tensor_from_array(in_tensors(3), global_batch, ftorch_device_type)
          call torch_tensor_from_array(out_tensors(1), global_velocity, torch_kCPU)
 
          call torch_model_forward(gnn_model, in_tensors, out_tensors)
@@ -425,7 +430,7 @@ contains
       end do
 
       ! Clean up
-      deallocate(local_features, local_velocity, global_features, global_velocity)
+      deallocate(local_features, local_velocity, global_features, global_velocity, global_batch)
 
 #else
       call mpas_log_write('GNN velocity solver requires compilation with USE_FTORCH.', MPAS_LOG_CRIT)
