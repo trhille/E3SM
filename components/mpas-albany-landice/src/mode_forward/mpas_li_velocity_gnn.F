@@ -276,8 +276,8 @@ contains
       ! Ice-only subgraph arrays (rank 0 only)
       integer, allocatable :: ice_map(:)                                ! maps global index to compact ice index
       integer :: nIceCells, nIceEdgesUndirected, nIceEdgesDirected
-      real (kind=RKIND), allocatable, target :: ice_features(:,:)       ! (nIceCells, nFeatures)
-      real (kind=RKIND), allocatable, target :: ice_velocity(:,:)       ! (nIceCells, 2)
+      real (kind=4), allocatable, target :: ice_features(:,:)           ! (nIceCells, nFeatures) single precision
+      real (kind=4), allocatable, target :: ice_velocity(:,:)           ! (nIceCells, 2) single precision
       integer(kind=8), allocatable, target :: ice_edge_index(:,:)       ! (2, nIceEdgesDirected)
       integer(kind=8), allocatable, target :: ice_batch(:)              ! (nIceCells)
 
