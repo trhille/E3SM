@@ -710,24 +710,48 @@ contains
       integer, intent(in) :: nCells, nFeat, nEdges
 
       logical, save :: dumped = .false.
+      integer :: iu, ios
+      integer :: i
 
       if (dumped) return
       dumped = .true.
 
       call mpas_log_write('Dumping GNN debug files: nCells=$i, nFeat=$i, nEdges=$i', &
            intArgs=(/nCells, nFeat, nEdges/))
+      call mpas_log_write('  features array shape: $i x $i', &
+           intArgs=(/size(features,1), size(features,2)/))
+      call mpas_log_write('  edge_index array shape: $i x $i', &
+           intArgs=(/size(edge_index,1), size(edge_index,2)/))
 
-      open(unit=901, file='gnn_debug_features.bin', form='unformatted', access='stream', status='replace')
-      write(901) features(1:nCells, 1:nFeat)
-      close(901)
+      open(newunit=iu, file='gnn_debug_features.bin', form='unformatted', &
+           access='stream', status='replace', iostat=ios)
+      call mpas_log_write('  features open iostat=$i, unit=$i', intArgs=(/ios, iu/))
+      write(iu) features(1:nCells, 1:nFeat)
+      close(iu)
 
-      open(unit=902, file='gnn_debug_edge_index.bin', form='unformatted', access='stream', status='replace')
-      write(902) edge_index(1:2, 1:nEdges)
-      close(902)
+      open(newunit=iu, file='gnn_debug_edge_index.bin', form='unformatted', &
+           access='stream', status='replace', iostat=ios)
+      call mpas_log_write('  edge_index open iostat=$i, unit=$i', intArgs=(/ios, iu/))
+      write(iu) edge_index(1:2, 1:nEdges)
+      close(iu)
 
-      open(unit=903, file='gnn_debug_velocity.bin', form='unformatted', access='stream', status='replace')
-      write(903) velocity(1:nCells, 1:2)
-      close(903)
+      open(newunit=iu, file='gnn_debug_velocity.bin', form='unformatted', &
+           access='stream', status='replace', iostat=ios)
+      call mpas_log_write('  velocity open iostat=$i, unit=$i', intArgs=(/ios, iu/))
+      write(iu) velocity(1:nCells, 1:2)
+      close(iu)
+
+      ! Write text file with first 5 rows for verification
+      open(newunit=iu, file='gnn_debug_check.txt', status='replace', iostat=ios)
+      write(iu, '(A)') '# First 5 rows of features (11 cols):'
+      do i = 1, min(5, nCells)
+         write(iu, '(11(ES15.7,1X))') features(i, 1:nFeat)
+      end do
+      write(iu, '(A)') '# First 5 edge pairs:'
+      do i = 1, min(5, nEdges)
+         write(iu, '(2(I10,1X))') edge_index(1, i), edge_index(2, i)
+      end do
+      close(iu)
 
       call mpas_log_write('GNN debug files written.')
 
