@@ -100,9 +100,9 @@ contains
       integer, dimension(:,:), pointer :: cellsOnEdge
       integer, dimension(:), pointer :: indexToCellID, indexToEdgeID
       integer :: myRank, nProcs, iEdge, idx
-      integer :: nEdgesLocal
+      integer :: nEdgesLocal, nValidEdges
       ! Temporary arrays for gathering edge connectivity
-      integer, allocatable :: local_edges(:,:)  ! (2, nEdgesSolve) with global cell IDs
+      integer, allocatable :: local_edges(:,:)  ! (2, nValidEdges) with global cell IDs
       integer, allocatable :: edgecounts(:), edgedispls(:)
       integer, allocatable :: all_edges_flat(:)
       integer :: nEdgesAll, i
@@ -146,17 +146,29 @@ contains
       end do
 
       ! --- Build global edge_index ---
-      ! Collect local edges as global cell ID pairs
-      allocate(local_edges(2, nEdgesLocal))
+      ! Collect local edges as global cell ID pairs, skipping boundary
+      ! edges where cellsOnEdge contains 0 (garbage cells)
+      nValidEdges = 0
       do iEdge = 1, nEdgesLocal
-         local_edges(1, iEdge) = indexToCellID(cellsOnEdge(1, iEdge))
-         local_edges(2, iEdge) = indexToCellID(cellsOnEdge(2, iEdge))
+         if (cellsOnEdge(1, iEdge) > 0 .and. cellsOnEdge(2, iEdge) > 0) then
+            nValidEdges = nValidEdges + 1
+         endif
+      end do
+
+      allocate(local_edges(2, nValidEdges))
+      idx = 0
+      do iEdge = 1, nEdgesLocal
+         if (cellsOnEdge(1, iEdge) > 0 .and. cellsOnEdge(2, iEdge) > 0) then
+            idx = idx + 1
+            local_edges(1, idx) = indexToCellID(cellsOnEdge(1, iEdge))
+            local_edges(2, idx) = indexToCellID(cellsOnEdge(2, iEdge))
+         endif
       end do
 
       ! Gather edge counts from all ranks
       allocate(edgecounts(nProcs))
       allocate(edgedispls(nProcs))
-      call MPI_Allgather(nEdgesLocal * 2, 1, MPI_INTEGER, edgecounts, 1, MPI_INTEGER, &
+      call MPI_Allgather(nValidEdges * 2, 1, MPI_INTEGER, edgecounts, 1, MPI_INTEGER, &
                          domain % dminfo % comm, err)
       nEdgesAll = sum(edgecounts) / 2  ! total undirected edges
       edgedispls(1) = 0
@@ -171,7 +183,7 @@ contains
          allocate(all_edges_flat(1))  ! placeholder
       endif
 
-      call MPI_Gatherv(local_edges, nEdgesLocal * 2, MPI_INTEGER, &
+      call MPI_Gatherv(local_edges, nValidEdges * 2, MPI_INTEGER, &
                        all_edges_flat, edgecounts, edgedispls, MPI_INTEGER, &
                        0, domain % dminfo % comm, err)
 
@@ -210,6 +222,11 @@ contains
       call mpas_log_write('GNN velocity solver initialized.')
       call mpas_log_write('  Global cells: $i, Directed edges: $i', &
            intArgs=(/nCellsGlobal, nDirectedEdgesGlobal/))
+      if (myRank == 0) then
+         call mpas_log_write('nCellsGlobal: $i', intArgs=(/nCellsGlobal/))
+         call mpas_log_write('edge_index min: $i', intArgs=(/int(minval(global_edge_index))/))
+         call mpas_log_write('edge_index max: $i', intArgs=(/int(maxval(global_edge_index))/))
+      endif
 
 #else
       call mpas_log_write('GNN velocity solver requires compilation with USE_FTORCH.', MPAS_LOG_CRIT)
