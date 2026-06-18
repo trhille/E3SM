@@ -441,6 +441,14 @@ contains
             endif
          end do
 
+         ! Debug: print first ice cell features from global (double) and ice (single)
+         call mpas_log_write('First global_features (double): x=$r y=$r thick=$r', &
+              realArgs=(/global_features(1, 1), global_features(1, 2), global_features(1, 4)/))
+         call mpas_log_write('First ice_features (single): x=$r y=$r thick=$r', &
+              realArgs=(/dble(ice_features(1, 1)), dble(ice_features(1, 2)), dble(ice_features(1, 4))/))
+         call mpas_log_write('nIceCells=$i, nIceEdgesDirected will be computed next', &
+              intArgs=(/nIceCells/))
+
          ! Build ice-only bidirectional edge_index
          ! First count edges where both endpoints have ice
          nIceEdgesUndirected = 0
