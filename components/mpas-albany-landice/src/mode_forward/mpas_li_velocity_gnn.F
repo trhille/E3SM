@@ -271,12 +271,15 @@ contains
       real (kind=RKIND), allocatable :: local_features(:,:)  ! (nLocalOwned, nFeatures)
       real (kind=RKIND), allocatable :: local_velocity(:,:)  ! (nLocalOwned, 2)
 
-      ! Global arrays on rank 0
+      ! Global arrays on rank 0 (indexed by global cell ID)
       real (kind=RKIND), allocatable :: global_features(:,:)   ! (nCellsGlobal, nFeatures)
       real (kind=RKIND), allocatable :: global_velocity(:,:)   ! (nCellsGlobal, 2)
+      real (kind=RKIND), allocatable :: gathered_features(:,:) ! (nCellsGlobal, nFeatures) in gather order
+      real (kind=RKIND), allocatable :: gathered_velocity(:,:) ! (nCellsGlobal, 2) in gather order
+      integer, allocatable :: global_cellIDs(:)                ! (nCellsGlobal) maps gathered pos -> global cell ID
 
       ! Ice-only subgraph arrays (rank 0 only)
-      integer, allocatable :: ice_map(:)                                ! maps global index to compact ice index
+      integer, allocatable :: ice_map(:)                                ! maps global cell ID to compact ice index
       integer :: nIceCells, nIceEdgesUndirected, nIceEdgesDirected
       real (kind=4), allocatable, target :: ice_features(:,:)           ! (nIceCells, nFeatures) single precision
       real (kind=4), allocatable, target :: ice_velocity(:,:)           ! (nIceCells, 2) single precision
@@ -402,20 +405,39 @@ contains
          endif
       end do
 
-      ! --- MPI Gather features to rank 0 ---
+      ! --- MPI Gather features and cell IDs to rank 0 ---
       if (myRank == 0) then
+         allocate(gathered_features(nCellsGlobal, nFeatures))
          allocate(global_features(nCellsGlobal, nFeatures))
          allocate(global_velocity(nCellsGlobal, 2))
+         allocate(gathered_velocity(nCellsGlobal, 2))
+         allocate(global_cellIDs(nCellsGlobal))
          global_velocity(:,:) = 0.0_RKIND  ! zero velocity for non-ice cells
       else
+         allocate(gathered_features(1, 1))  ! placeholder
          allocate(global_features(1, 1))  ! placeholder
          allocate(global_velocity(1, 1))  ! placeholder
+         allocate(gathered_velocity(1, 1))  ! placeholder
+         allocate(global_cellIDs(1))  ! placeholder
       endif
 
+      ! Gather cell IDs so we can reorder from gathered position to global cell ID order
+      call MPI_Gatherv(indexToCellID, nLocalOwned, MPI_INTEGER, &
+                       global_cellIDs, recvcounts, displs, MPI_INTEGER, &
+                       0, domain % dminfo % comm, err)
+
       ! Gather each feature column separately to handle Fortran column-major layout
-      call gather_features_to_rank0(local_features, global_features, &
+      call gather_features_to_rank0(local_features, gathered_features, &
                                     nLocalOwned, nCellsGlobal, nFeatures, &
                                     recvcounts, displs, domain % dminfo % comm, myRank)
+
+      ! Reorder features from gathered order to global cell ID order
+      ! so that features and edge indices use the same index space
+      if (myRank == 0) then
+         do i = 1, nCellsGlobal
+            global_features(global_cellIDs(i), :) = gathered_features(i, :)
+         end do
+      endif
 
       ! --- Filter to ice-only cells and run inference on rank 0 ---
       if (myRank == 0) then
@@ -535,9 +557,16 @@ contains
          deallocate(ice_map, ice_features, ice_velocity, ice_edge_index, ice_batch)
       endif
 
+      ! Reorder velocity from global cell ID order back to gathered order for scattering
+      if (myRank == 0) then
+         do i = 1, nCellsGlobal
+            gathered_velocity(i, :) = global_velocity(global_cellIDs(i), :)
+         end do
+      endif
+
       ! --- Scatter predicted velocities back to all ranks ---
       allocate(local_velocity(nLocalOwned, 2))
-      call scatter_velocity_from_rank0(global_velocity, local_velocity, &
+      call scatter_velocity_from_rank0(gathered_velocity, local_velocity, &
                                        nLocalOwned, nCellsGlobal, &
                                        recvcounts, displs, domain % dminfo % comm, myRank)
 
@@ -564,6 +593,7 @@ contains
 
       ! Clean up
       deallocate(local_features, local_velocity, global_features, global_velocity)
+      deallocate(gathered_features, gathered_velocity, global_cellIDs)
 
 #else
       call mpas_log_write('GNN velocity solver requires compilation with USE_FTORCH.', MPAS_LOG_CRIT)
