@@ -489,6 +489,10 @@ contains
          ! Build tensors and run inference
          allocate(ice_velocity(nIceCells, 2))
 
+         ! Dump GNN inputs for debugging BEFORE inference (first solve call only)
+         call dump_gnn_debug(ice_features, ice_edge_index, ice_velocity, &
+                             nIceCells, nFeatures, nIceEdgesDirected)
+
          ! Disable FPE traps around LibTorch call (LibTorch triggers them internally)
          call ieee_get_halting_mode(ieee_invalid, fpe_invalid)
          call ieee_get_halting_mode(ieee_divide_by_zero, fpe_divzero)
@@ -511,10 +515,6 @@ contains
          call ieee_set_halting_mode(ieee_invalid, fpe_invalid)
          call ieee_set_halting_mode(ieee_divide_by_zero, fpe_divzero)
          call ieee_set_halting_mode(ieee_overflow, fpe_overflow)
-
-         ! Dump GNN inputs/outputs for debugging (first solve call only)
-         call dump_gnn_debug(ice_features, ice_edge_index, ice_velocity, &
-                             nIceCells, nFeatures, nIceEdgesDirected)
 
          ! Map ice velocities back to global array
          do iCell = 1, nCellsGlobal
