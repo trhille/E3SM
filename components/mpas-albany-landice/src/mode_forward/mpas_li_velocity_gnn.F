@@ -489,10 +489,10 @@ contains
          call ieee_set_halting_mode(ieee_divide_by_zero, .false.)
          call ieee_set_halting_mode(ieee_overflow, .false.)
 
-         call torch_tensor_from_array(in_tensors(1), ice_features, ftorch_device_type)
-         call torch_tensor_from_array(in_tensors(2), ice_edge_index, ftorch_device_type)
-         call torch_tensor_from_array(in_tensors(3), ice_batch, ftorch_device_type)
-         call torch_tensor_from_array(out_tensors(1), ice_velocity, torch_kCPU)
+         call torch_tensor_from_array(in_tensors(1), ice_features, [1, 2], ftorch_device_type)
+         call torch_tensor_from_array(in_tensors(2), ice_edge_index, [1, 2], ftorch_device_type)
+         call torch_tensor_from_array(in_tensors(3), ice_batch, [1], ftorch_device_type)
+         call torch_tensor_from_array(out_tensors(1), ice_velocity, [1, 2], torch_kCPU)
 
          call torch_model_forward(gnn_model, in_tensors, out_tensors)
 
