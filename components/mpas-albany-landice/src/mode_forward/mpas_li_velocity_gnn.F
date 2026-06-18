@@ -504,6 +504,10 @@ contains
          call ieee_set_halting_mode(ieee_divide_by_zero, fpe_divzero)
          call ieee_set_halting_mode(ieee_overflow, fpe_overflow)
 
+         ! Dump GNN inputs/outputs for debugging (first solve call only)
+         call dump_gnn_debug(ice_features, ice_edge_index, ice_velocity, &
+                             nIceCells, nFeatures, nIceEdgesDirected)
+
          ! Map ice velocities back to global array
          do iCell = 1, nCellsGlobal
             if (ice_map(iCell) >= 0) then
@@ -676,6 +680,50 @@ contains
       deallocate(local_col, global_col)
 
    end subroutine scatter_velocity_from_rank0
+
+
+!-----------------------------------------------------------------------
+!
+!  routine dump_gnn_debug
+!
+!> \brief   Write GNN inputs/outputs to binary files for debugging
+!> \details Only writes once (first call). Files can be read in Python:
+!>    features = np.fromfile('gnn_debug_features.bin', dtype=np.float32).reshape(nIceCells, nFeatures)
+!>    edge_index = np.fromfile('gnn_debug_edge_index.bin', dtype=np.int64).reshape(2, nEdges)
+!>    velocity = np.fromfile('gnn_debug_velocity.bin', dtype=np.float32).reshape(nIceCells, 2)
+!
+!-----------------------------------------------------------------------
+
+   subroutine dump_gnn_debug(features, edge_index, velocity, nCells, nFeat, nEdges)
+
+      real (kind=4), intent(in) :: features(:,:)
+      integer(kind=8), intent(in) :: edge_index(:,:)
+      real (kind=4), intent(in) :: velocity(:,:)
+      integer, intent(in) :: nCells, nFeat, nEdges
+
+      logical, save :: dumped = .false.
+
+      if (dumped) return
+      dumped = .true.
+
+      call mpas_log_write('Dumping GNN debug files: nCells=$i, nFeat=$i, nEdges=$i', &
+           intArgs=(/nCells, nFeat, nEdges/))
+
+      open(unit=901, file='gnn_debug_features.bin', form='unformatted', access='stream', status='replace')
+      write(901) features(1:nCells, 1:nFeat)
+      close(901)
+
+      open(unit=902, file='gnn_debug_edge_index.bin', form='unformatted', access='stream', status='replace')
+      write(902) edge_index(1:2, 1:nEdges)
+      close(902)
+
+      open(unit=903, file='gnn_debug_velocity.bin', form='unformatted', access='stream', status='replace')
+      write(903) velocity(1:nCells, 1:2)
+      close(903)
+
+      call mpas_log_write('GNN debug files written.')
+
+   end subroutine dump_gnn_debug
 
 
 end module li_velocity_gnn
