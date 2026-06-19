@@ -580,12 +580,27 @@ contains
       end do
 
       ! --- Compute normalVelocity from cell-centered velocities ---
+      ! At margin edges (ice cell <-> non-ice cell), use one-sided velocity
+      ! from the ice cell rather than averaging with zero. This allows
+      ! advection to transport ice into empty cells, analogous to how Albany
+      ! provides velocity on its boundary edges.
       do iEdge = 1, nEdges
          cell1 = cellsOnEdge(1, iEdge)
          cell2 = cellsOnEdge(2, iEdge)
          do k = 1, nVertInterfacesLocal
-            xVelEdge = 0.5_RKIND * (uReconstructX(k, cell1) + uReconstructX(k, cell2))
-            yVelEdge = 0.5_RKIND * (uReconstructY(k, cell1) + uReconstructY(k, cell2))
+            if (thickness(cell1) > 0.0_RKIND .and. thickness(cell2) <= 0.0_RKIND) then
+               ! Margin edge: only cell1 has ice, use its velocity
+               xVelEdge = uReconstructX(k, cell1)
+               yVelEdge = uReconstructY(k, cell1)
+            else if (thickness(cell2) > 0.0_RKIND .and. thickness(cell1) <= 0.0_RKIND) then
+               ! Margin edge: only cell2 has ice, use its velocity
+               xVelEdge = uReconstructX(k, cell2)
+               yVelEdge = uReconstructY(k, cell2)
+            else
+               ! Interior edge or both cells empty: average
+               xVelEdge = 0.5_RKIND * (uReconstructX(k, cell1) + uReconstructX(k, cell2))
+               yVelEdge = 0.5_RKIND * (uReconstructY(k, cell1) + uReconstructY(k, cell2))
+            endif
             normalVelocity(k, iEdge) = xVelEdge * edgeNormalVectors(1, iEdge) + &
                                        yVelEdge * edgeNormalVectors(2, iEdge)
          end do
