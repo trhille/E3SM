@@ -579,6 +579,11 @@ contains
          end do
       end do
 
+      ! Halo exchange uReconstructX/Y so that halo cells have current values
+      ! before computing normalVelocity on owned edges with halo-cell neighbors
+      call mpas_dmpar_field_halo_exch(domain, 'uReconstructX')
+      call mpas_dmpar_field_halo_exch(domain, 'uReconstructY')
+
       ! --- Compute normalVelocity from cell-centered velocities ---
       ! At margin edges (ice cell <-> non-ice cell), use one-sided velocity
       ! from the ice cell rather than averaging with zero. This allows
