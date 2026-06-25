@@ -278,8 +278,9 @@ contains
       real (kind=RKIND), allocatable :: gathered_velocity(:,:) ! (nCellsGlobal, 2) in gather order
       integer, allocatable :: global_cellIDs(:)                ! (nCellsGlobal) maps gathered pos -> global cell ID
 
-      ! Ice-only subgraph arrays (rank 0 only)
-      integer, allocatable :: ice_map(:)                                ! maps global cell ID to compact ice index
+      ! Ice-margin subgraph arrays (rank 0 only)
+      integer, allocatable :: ice_map(:)                                ! maps global cell ID to compact node index
+      logical, allocatable :: has_ice(:)                                ! true if cell has ice (thickness > 0)
       integer :: nIceCells, nIceEdgesUndirected, nIceEdgesDirected
       real (kind=4), allocatable, target :: ice_features(:,:)           ! (nIceCells, nFeatures) single precision
       real (kind=4), allocatable, target :: ice_velocity(:,:)           ! (nIceCells, 2) single precision
@@ -439,21 +440,44 @@ contains
          end do
       endif
 
-      ! --- Filter to ice-only cells and run inference on rank 0 ---
+      ! --- Filter to ice + margin cells and run inference on rank 0 ---
       if (myRank == 0) then
-         ! Identify ice cells (thickness > 0, feature 4)
+         ! Identify which cells have ice (thickness > 0)
+         allocate(has_ice(nCellsGlobal))
          allocate(ice_map(nCellsGlobal))
+         do iCell = 1, nCellsGlobal
+            has_ice(iCell) = (global_features(iCell, 4) > 0.0_RKIND)  ! thickness in km
+         end do
+
+         ! Mark cells to include in subgraph: ice cells + ice-free neighbors
+         ! (edges require at least one ice-filled endpoint)
+         ice_map(:) = -1
+         do i = 1, nUndirectedEdgesGlobal
+            c1 = global_edge_pairs(1, i) + 1  ! 1-based for array lookup
+            c2 = global_edge_pairs(2, i) + 1
+            if (c1 >= 1 .and. c1 <= nCellsGlobal .and. &
+                c2 >= 1 .and. c2 <= nCellsGlobal) then
+               if (has_ice(c1) .or. has_ice(c2)) then
+                  ice_map(c1) = 0
+                  ice_map(c2) = 0
+               endif
+            endif
+         end do
+         ! Ensure isolated ice cells (no valid edges) are included
+         do iCell = 1, nCellsGlobal
+            if (has_ice(iCell)) ice_map(iCell) = 0
+         end do
+
+         ! Assign compact 0-based indices
          nIceCells = 0
          do iCell = 1, nCellsGlobal
-            if (global_features(iCell, 4) > 0.0_RKIND) then  ! thickness in km
+            if (ice_map(iCell) >= 0) then
+               ice_map(iCell) = nIceCells  ! 0-based compact index
                nIceCells = nIceCells + 1
-               ice_map(iCell) = nIceCells - 1  ! 0-based compact index
-            else
-               ice_map(iCell) = -1
             endif
          end do
 
-         ! Build ice-only features
+         ! Build subgraph features (ice cells + margin cells)
          allocate(ice_features(nIceCells, nFeatures))
          idx = 0
          do iCell = 1, nCellsGlobal
@@ -463,23 +487,22 @@ contains
             endif
          end do
 
-         ! Debug: print first ice cell features from global (double) and ice (single)
+         ! Debug output
          call mpas_log_write('First global_features (double): x=$r y=$r thick=$r', &
               realArgs=(/global_features(1, 1), global_features(1, 2), global_features(1, 4)/))
          call mpas_log_write('First ice_features (single): x=$r y=$r thick=$r', &
               realArgs=(/dble(ice_features(1, 1)), dble(ice_features(1, 2)), dble(ice_features(1, 4))/))
-         call mpas_log_write('nIceCells=$i, nIceEdgesDirected will be computed next', &
+         call mpas_log_write('nIceCells (incl. margin)=$i, nIceEdgesDirected will be computed next', &
               intArgs=(/nIceCells/))
 
-         ! Build ice-only bidirectional edge_index
-         ! First count edges where both endpoints have ice
+         ! Build bidirectional edge_index for edges with at least one ice endpoint
          nIceEdgesUndirected = 0
          do i = 1, nUndirectedEdgesGlobal
-            c1 = global_edge_pairs(1, i) + 1  ! 1-based for ice_map lookup
+            c1 = global_edge_pairs(1, i) + 1
             c2 = global_edge_pairs(2, i) + 1
             if (c1 >= 1 .and. c1 <= nCellsGlobal .and. &
                 c2 >= 1 .and. c2 <= nCellsGlobal) then
-               if (ice_map(c1) >= 0 .and. ice_map(c2) >= 0) then
+               if (has_ice(c1) .or. has_ice(c2)) then
                   nIceEdgesUndirected = nIceEdgesUndirected + 1
                endif
             endif
@@ -493,7 +516,7 @@ contains
             c2 = global_edge_pairs(2, i) + 1
             if (c1 >= 1 .and. c1 <= nCellsGlobal .and. &
                 c2 >= 1 .and. c2 <= nCellsGlobal) then
-               if (ice_map(c1) >= 0 .and. ice_map(c2) >= 0) then
+               if (has_ice(c1) .or. has_ice(c2)) then
                   idx = idx + 1
                   ice_edge_index(1, idx) = ice_map(c1)
                   ice_edge_index(2, idx) = ice_map(c2)
@@ -554,7 +577,7 @@ contains
          call dump_gnn_debug(ice_features, ice_edge_index, ice_velocity, &
                              nIceCells, nFeatures, nIceEdgesDirected)
 
-         deallocate(ice_map, ice_features, ice_velocity, ice_edge_index, ice_batch)
+         deallocate(ice_map, has_ice, ice_features, ice_velocity, ice_edge_index, ice_batch)
       endif
 
       ! Reorder velocity from global cell ID order back to gathered order for scattering
