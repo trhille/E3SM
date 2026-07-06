@@ -62,6 +62,9 @@ endif
 	FCINCLUDES += -I$(FTORCH_ROOT)/include/ftorch
 	LIBS += -Wl,-rpath,$(FTORCH_ROOT)/lib64 -L$(FTORCH_ROOT)/lib64 -lftorch
 	LIBS += -Wl,-rpath,$(LIBTORCH_ROOT)/lib -L$(LIBTORCH_ROOT)/lib -ltorch -ltorch_cpu -lc10 -lstdc++
+ifeq "$(FTORCH_CUDA)" "true"
+	LIBS += -ltorch_cuda -lc10_cuda
+endif
 endif
 
 # ===================================
