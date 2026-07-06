@@ -60,10 +60,11 @@ $(error LIBTORCH_ROOT is not set.  Please set LIBTORCH_ROOT to the LibTorch inst
 endif
 	override CPPFLAGS += -DUSE_FTORCH
 	FCINCLUDES += -I$(FTORCH_ROOT)/include/ftorch
-	LIBS += -Wl,-rpath,$(FTORCH_ROOT)/lib64 -L$(FTORCH_ROOT)/lib64 -lftorch
-	LIBS += -Wl,-rpath,$(LIBTORCH_ROOT)/lib -L$(LIBTORCH_ROOT)/lib -ltorch -ltorch_cpu -lc10 -lstdc++
+	override LDFLAGS += -Wl,-rpath,$(FTORCH_ROOT)/lib64 -L$(FTORCH_ROOT)/lib64 -Wl,-rpath,$(LIBTORCH_ROOT)/lib -L$(LIBTORCH_ROOT)/lib
 ifeq "$(FTORCH_CUDA)" "true"
-	LIBS += -ltorch_cuda -lc10_cuda
+	LIBS += -Wl,--as-needed -lftorch -ltorch -ltorch_cpu -ltorch_cuda -lc10 -lc10_cuda -lstdc++ -Wl,--no-as-needed
+else
+	LIBS += -Wl,--as-needed -lftorch -ltorch -ltorch_cpu -lc10 -lstdc++ -Wl,--no-as-needed
 endif
 endif
 
