@@ -65,7 +65,7 @@ ifeq "$(FTORCH_CUDA)" "true"
 ifndef CUDA_HOME
 $(error CUDA_HOME is not set.  Please set CUDA_HOME to the CUDA toolkit directory when FTORCH_CUDA=true)
 endif
-	LIBS += -Wl,--as-needed -L$(FTORCH_ROOT)/lib64 -L$(LIBTORCH_ROOT)/lib -Wl,-rpath-link,$(CUDA_HOME)/lib64 -Wl,-rpath-link,$(LIBTORCH_ROOT)/lib -lftorch -ltorch -ltorch_cpu -ltorch_cuda -lc10 -lc10_cuda -lgomp -lstdc++ -Wl,--no-as-needed
+	LIBS += -Wl,--as-needed,--allow-shlib-undefined -L$(FTORCH_ROOT)/lib64 -L$(LIBTORCH_ROOT)/lib -Wl,-rpath-link,$(CUDA_HOME)/lib64 -Wl,-rpath-link,$(LIBTORCH_ROOT)/lib -lftorch -ltorch -ltorch_cpu -ltorch_cuda -lc10 -lc10_cuda -lgomp -lstdc++ -Wl,--no-as-needed
 else
 	LIBS += -Wl,--as-needed -L$(FTORCH_ROOT)/lib64 -L$(LIBTORCH_ROOT)/lib -lftorch -ltorch -ltorch_cpu -lc10 -lgomp -lstdc++ -Wl,--no-as-needed
 endif
