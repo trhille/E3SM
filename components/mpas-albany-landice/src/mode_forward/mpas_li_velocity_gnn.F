@@ -69,7 +69,7 @@ module li_velocity_gnn
    integer, save :: ftorch_device_type
 
    ! Number of input features
-   integer, parameter :: nFeatures = 11
+   integer, parameter :: nFeatures = 12
 
    logical, save :: gnn_initialized = .false.
 
@@ -403,6 +403,13 @@ contains
             local_features(iCell, 11) = 1.0_RKIND
          else
             local_features(iCell, 11) = 0.0_RKIND
+         endif
+
+         ! Feature 12: margin mask (1.0 if ice margin, 0.0 otherwise)
+         if (li_mask_is_margin(cellMask(iCell))) then
+            local_features(iCell, 12) = 1.0_RKIND
+         else
+            local_features(iCell, 12) = 0.0_RKIND
          endif
       end do
 
@@ -801,7 +808,7 @@ contains
       open(newunit=iu, file='gnn_debug_features.txt', status='replace', iostat=ios)
       write(iu, '(A,I8,A,I3)') '# nCells=', nCells, ' nFeat=', nFeat
       do i = 1, nCells
-         write(iu, '(11(ES15.7,1X))') features(i, 1:nFeat)
+         write(iu, '(12(ES15.7,1X))') features(i, 1:nFeat)
       end do
       close(iu)
 
