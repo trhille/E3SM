@@ -76,6 +76,10 @@
 		            description="Device type for GNN inference. 'cpu' or 'cuda'."
 		            possible_values="'cpu', 'cuda'"
 		/>
+		<nml_option name="config_gnn_solver_init" type="character" default_value="FO" units="unitless"
+		            description="Velocity solver used for the initial velocity solve of a 'gnn' run when the run is not a restart. This provides a physically consistent starting velocity field before the GNN emulator is used for all subsequent solves. 'FO' uses the external Blatter-Pattyn dycore (requires compiling with it). 'sia' uses the native shallow-ice-approximation solver. 'gnn' uses the GNN emulator from the first solve (no separate initial solve). 'none' skips the initial velocity solve entirely. On a restart this option is ignored and the velocity is taken from the restart file."
+		            possible_values="'FO', 'sia', 'gnn', 'none'"
+		/>
 		<nml_option name="config_sia_tangent_slope_calculation" type="character" default_value="from_vertex_barycentric" units="unitless"
 		            description="Selection of the method for calculating the tangent component of surface slope at edges needed by the SIA velocity solver.
 'from_vertex_barycentric' interpolates upperSurface values from cell centers to vertices using the barycentric interpolation routine in operators (mpas_cells_to_points_using_baryweights) and then calculates the slope between vertices.  It works for obtuse triangles, but will not work correctly across the edges of periodic meshes.
