@@ -68,8 +68,11 @@ module li_velocity_gnn
    ! Device type for FTorch
    integer, save :: ftorch_device_type
 
-   ! Number of input features
-   integer, parameter :: nFeatures = 12
+   ! Number of input features. Features 1-12 are assembled per-rank; features
+   ! 13-14 (surface-gradient dsurf/dx, dsurf/dy) are computed on rank 0 after
+   ! the gather, because the least-squares gradient needs each cell's neighbors
+   ! and rank 0 holds the full global mesh (features + global_edge_pairs).
+   integer, parameter :: nFeatures = 14
 
    logical, save :: gnn_initialized = .false.
 
@@ -410,6 +413,13 @@ contains
          else
             local_features(iCell, 12) = 0.0_RKIND
          endif
+
+         ! Features 13-14 (surface-gradient dsurf/dx, dsurf/dy) cannot be
+         ! computed per-rank without halo neighbor values; they are filled on
+         ! rank 0 after the gather (see compute_surface_gradient_rank0). Zero
+         ! them here so the gather never propagates uninitialized values.
+         local_features(iCell, 13) = 0.0_RKIND
+         local_features(iCell, 14) = 0.0_RKIND
       end do
 
       ! --- MPI Gather features and cell IDs to rank 0 ---
@@ -444,6 +454,13 @@ contains
          do i = 1, nCellsGlobal
             global_features(global_cellIDs(i), :) = gathered_features(i, :)
          end do
+
+         ! Fill features 13-14 (surface-gradient) now that the full global mesh
+         ! is assembled on rank 0. Uses global_features columns and the global
+         ! edge list, so no halo exchange is needed and it stays consistent with
+         ! the other (already-gathered) features.
+         call compute_surface_gradient_rank0(global_features, nCellsGlobal, &
+                                             nFeatures)
       endif
 
       ! --- Filter to ice-only cells and run inference on rank 0 ---
@@ -710,6 +727,110 @@ contains
 
 !-----------------------------------------------------------------------
 !
+!  routine compute_surface_gradient_rank0
+!
+!> \brief   Fill features 13-14 with the surface gradient (dsurf/dx, dsurf/dy)
+!> \author  Trevor Hillebrand
+!> \details
+!>  Rank 0 only. Computes a per-cell least-squares surface gradient over ice
+!>  neighbors, matching utils/load_data.py:surface_gradient in the training
+!>  pipeline. MUST stay consistent with that Python routine: same surface
+!>  definition (bed+thickness grounded; thickness*(1-rhoi/rhosw) floating),
+!>  same neighbor set (mesh cell adjacency), same closed-form 2x2 normal
+!>  equations, same degenerate handling (<2 neighbors or near-singular -> 0),
+!>  and all arithmetic in METERS (Python works in meters; the threshold 1e-12
+!>  is unit-dependent). global_features stores thickness/bed in km, so they are
+!>  scaled to meters here. Densities are hard-coded to match the Python
+!>  training code (rhoi=910, rhosw=1028), NOT the run configs, so that the
+!>  feature the model sees is identical to what it was trained on.
+!
+!-----------------------------------------------------------------------
+
+   subroutine compute_surface_gradient_rank0(global_features, nGlobal, nFeat)
+
+      real (kind=RKIND), intent(inout) :: global_features(:,:)
+      integer, intent(in) :: nGlobal, nFeat
+
+      ! Must match the Python training constants (utils/load_data.py), not the
+      ! run configs, so inputs are identical to those seen during training.
+      real (kind=RKIND), parameter :: rhoi_train = 910.0_RKIND
+      real (kind=RKIND), parameter :: rhosw_train = 1028.0_RKIND
+
+      real (kind=RKIND), allocatable :: surface(:), xm(:), ym(:)
+      logical, allocatable :: is_ice(:)
+      ! Per-cell accumulators for the 2x2 normal equations.
+      real (kind=RKIND), allocatable :: sxx(:), sxy(:), syy(:), bx(:), by(:)
+      integer, allocatable :: nnbr(:)
+      integer :: iCell, iEdge, a, b
+      real (kind=RKIND) :: dx, dy, db, det
+
+      allocate(surface(nGlobal), xm(nGlobal), ym(nGlobal), is_ice(nGlobal))
+      allocate(sxx(nGlobal), sxy(nGlobal), syy(nGlobal), bx(nGlobal), by(nGlobal))
+      allocate(nnbr(nGlobal))
+
+      ! Reconstruct surface (m), coordinates (m), and ice mask from the gathered
+      ! feature columns: 1=x[km], 2=y[km], 4=thickness[km], 5=bed[km],
+      ! 11=floatMask. (These columns are already consistent with the model's
+      ! other inputs, so surface is consistent too.)
+      do iCell = 1, nGlobal
+         xm(iCell) = global_features(iCell, 1) * 1000.0_RKIND
+         ym(iCell) = global_features(iCell, 2) * 1000.0_RKIND
+         is_ice(iCell) = (global_features(iCell, 4) > 0.0_RKIND)
+         if (global_features(iCell, 11) > 0.5_RKIND) then
+            ! Floating: flotation surface.
+            surface(iCell) = global_features(iCell, 4) * 1000.0_RKIND * &
+                             (1.0_RKIND - rhoi_train / rhosw_train)
+         else
+            ! Grounded: bed + thickness.
+            surface(iCell) = (global_features(iCell, 5) + &
+                              global_features(iCell, 4)) * 1000.0_RKIND
+         endif
+      end do
+
+      sxx(:) = 0.0_RKIND; sxy(:) = 0.0_RKIND; syy(:) = 0.0_RKIND
+      bx(:) = 0.0_RKIND;  by(:) = 0.0_RKIND;  nnbr(:) = 0
+
+      ! Accumulate normal-equation sums by iterating the undirected edge list.
+      ! For each ice-ice edge (a,b), cell a gains neighbor b and vice versa --
+      ! the same neighbor set Python builds from cellsOnCell (both encode cell
+      ! adjacency across shared edges). Non-ice neighbors are excluded.
+      do iEdge = 1, nUndirectedEdgesGlobal
+         a = global_edge_pairs(1, iEdge) + 1  ! 0-based -> 1-based
+         b = global_edge_pairs(2, iEdge) + 1
+         if (a < 1 .or. a > nGlobal .or. b < 1 .or. b > nGlobal) cycle
+         if (.not. is_ice(a) .or. .not. is_ice(b)) cycle
+
+         ! Contribution to cell a (neighbor b).
+         dx = xm(b) - xm(a); dy = ym(b) - ym(a); db = surface(b) - surface(a)
+         sxx(a) = sxx(a) + dx*dx; sxy(a) = sxy(a) + dx*dy; syy(a) = syy(a) + dy*dy
+         bx(a) = bx(a) + dx*db;   by(a) = by(a) + dy*db;   nnbr(a) = nnbr(a) + 1
+
+         ! Contribution to cell b (neighbor a).
+         dx = xm(a) - xm(b); dy = ym(a) - ym(b); db = surface(a) - surface(b)
+         sxx(b) = sxx(b) + dx*dx; sxy(b) = sxy(b) + dx*dy; syy(b) = syy(b) + dy*dy
+         bx(b) = bx(b) + dx*db;   by(b) = by(b) + dy*db;   nnbr(b) = nnbr(b) + 1
+      end do
+
+      ! Solve the 2x2 system per cell; degenerate cells keep gradient 0.
+      do iCell = 1, nGlobal
+         global_features(iCell, 13) = 0.0_RKIND
+         global_features(iCell, 14) = 0.0_RKIND
+         if (nnbr(iCell) < 2) cycle
+         det = sxx(iCell) * syy(iCell) - sxy(iCell) * sxy(iCell)
+         if (abs(det) < 1.0e-12_RKIND) cycle
+         global_features(iCell, 13) = &
+            (syy(iCell) * bx(iCell) - sxy(iCell) * by(iCell)) / det
+         global_features(iCell, 14) = &
+            (sxx(iCell) * by(iCell) - sxy(iCell) * bx(iCell)) / det
+      end do
+
+      deallocate(surface, xm, ym, is_ice, sxx, sxy, syy, bx, by, nnbr)
+
+   end subroutine compute_surface_gradient_rank0
+
+
+!-----------------------------------------------------------------------
+!
 !  routine scatter_velocity_from_rank0
 !
 !> \brief   Scatter predicted velocities from rank 0 to all ranks
@@ -785,7 +906,7 @@ contains
       open(newunit=iu, file='gnn_debug_features.txt', status='replace', iostat=ios)
       write(iu, '(A,I8,A,I3)') '# nCells=', nCells, ' nFeat=', nFeat
       do i = 1, nCells
-         write(iu, '(12(ES15.7,1X))') features(i, 1:nFeat)
+         write(iu, '(*(ES15.7,1X))') features(i, 1:nFeat)
       end do
       close(iu)
 
