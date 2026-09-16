@@ -4291,6 +4291,10 @@ module li_calving
       type (mpas_pool_type), pointer :: geometryPool
       type (mpas_pool_type), pointer :: meshPool
       type (mpas_pool_type), pointer :: velocityPool
+      type (mpas_pool_type), pointer :: scratchPool
+      type (field1dInteger), pointer :: seedMaskField
+      type (field1dInteger), pointer :: growMaskField
+      integer, dimension(:), pointer :: seedMask, growMask !masks to pass to flood-fill routine
       real (kind=RKIND), dimension(:), pointer :: thickness
       real (kind=RKIND), dimension(:), pointer :: calvingThickness
       real (kind=RKIND), dimension(:), pointer :: calvingThicknessFromThreshold
@@ -4298,14 +4302,18 @@ module li_calving
       integer, dimension(:), pointer :: calvingMask
       integer, dimension(:), pointer :: hydrofractureVulnerabilityMask
       integer, dimension(:), pointer :: cellMask
+      integer, dimension(:), pointer :: openOceanMask
+      integer, dimension(:,:), pointer :: cellsOnCell ! list of cells that neighbor each cell
+      integer, dimension(:), pointer :: nEdgesOnCell ! number of cells that border each cell
       integer, pointer :: nCells, nCellsSolve
       logical, pointer :: config_require_extensional_stresses_for_mask_calving
       real (kind=RKIND), pointer :: config_calving_fracture_toughness
       real (kind=RKIND), pointer :: config_ice_density
       real (kind=RKIND) :: vulnerabilityStressThreshold, resistiveStress
-      integer :: iCell
+      integer :: iCell, iNeighbor, jCell, iNeighbor2, kCell
       integer :: localMaskCellCount, globalMaskCellCount
       integer :: err_tmp
+      logical, dimension(:), allocatable :: marineDynMarginMask
 
       ! LEFM functions for shallow crevasses (Lai et al., 2020; Reynolds and Nowicki, 2026)
       real (kind=RKIND), parameter :: lefmFactor1 = 1.068_RKIND
@@ -4332,6 +4340,7 @@ module li_calving
          call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
          call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
          call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
+         call mpas_pool_get_subpool(block % structs, 'scratch', scratchPool)
 
          ! get fields
          call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
@@ -4344,14 +4353,34 @@ module li_calving
          call mpas_pool_get_array(geometryPool, 'thickness', thickness)
          call mpas_pool_get_array(velocityPool, 'tauMax', tauMax)
          call mpas_pool_get_array(velocityPool, 'tauMin', tauMin)
+         call mpas_pool_get_array(geometryPool, 'openOceanMask', openOceanMask)
+         call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
+         call mpas_pool_get_array(meshPool, 'cellsOnCell', cellsOnCell)
 
          ! update mask
          call li_calculate_mask(meshPool, velocityPool, geometryPool, err_tmp)
          err = ior(err, err_tmp)
 
+         ! Calculate open ocean mask for current geometry
+         ! note this should happen before allocating the scratch mask fields, because
+         ! they are also used in find_open_ocean
+         call find_open_ocean(domain, openOceanMask, err_tmp)
+         err = ior(err, err_tmp)
+
+         ! Allocate scratch fields for flood-fill
+         call mpas_pool_get_field(scratchPool, 'seedMask', seedMaskField)
+         call mpas_allocate_scratch_field(seedMaskField, single_block_in = .true.)
+         seedMask => seedMaskField % array
+         seedMask(:) = 0
+
+         call mpas_pool_get_field(scratchPool, 'growMask', growMaskField)
+         call mpas_allocate_scratch_field(growMaskField, single_block_in = .true.)
+         growMask => growMaskField % array
+         growMask(:) = 0
+
          localMaskCellCount = 0
 
-         ! === apply calving ===
+         ! === Calculate hydrofracture vulnerability ===
          do iCell = 1, nCells
             if (li_mask_is_floating_ice(cellMask(iCell))) then
                ! resistive stress from principal deviatoric stresses (eq. 4 of Reynolds and Nowicki, 2026)
@@ -4364,18 +4393,77 @@ module li_calving
             else
                hydrofractureVulnerabilityMask(iCell) = 0
             endif
+         enddo
 
-            if (li_mask_is_floating_ice(cellMask(iCell)) .and. (calvingMask(iCell) >= 1)) then
+         ! create mask of cells that are on the dynamic **marine** margin
+         ! (can't use just li_mask_is_dynamic_margin because it can pick up nunataks)
+         allocate(marineDynMarginMask(nCells + 1))
+         marineDynMarginMask(:) = .false.
+         do iCell = 1, nCells
+            if (li_mask_is_dynamic_margin(cellMask(iCell))) then
+               do iNeighbor = 1, nEdgesOnCell(iCell)
+                  jCell = cellsOnCell(iNeighbor, iCell)
+                  ! check if neighbor is open ocean
+                  if (openOceanMask(jCell) == 1) then
+                     marineDynMarginMask(iCell) = .true.
+                     exit ! no need to check more neighbors
+                  endif
+                  ! check if neighbor is nondynamic floating adjacent to open ocean
+                  if (li_mask_is_floating_ice(cellMask(jCell)) .and. (.not. li_mask_is_dynamic_ice(cellMask(jCell)))) then
+                     do iNeighbor2 = 1, nEdgesOnCell(jCell)
+                        kCell = cellsOnCell(iNeighbor2, jCell)
+                        if (openOceanMask(kCell) == 1) then
+                           marineDynMarginMask(iCell) = .true.
+                           exit ! no need to check more neighbors
+                        endif
+                     enddo
+                  endif
+               enddo ! neighbor loop
+            endif ! if dynamic margin here
+         enddo ! cell loop
+
+         ! define seed and grow masks for flood fill
+         ! seed with marine margin cells that meet calving criteria
+         do iCell = 1, nCells
+            if (marineDynMarginMask(iCell) .and. &
+                li_mask_is_floating_ice(cellMask(iCell)) .and. &
+                (calvingMask(iCell) >= 1)) then
                if ( (.not. config_require_extensional_stresses_for_mask_calving) .or. &
                     (hydrofractureVulnerabilityMask(iCell) == 1) ) then
-                  !call mpas_log_write("Found masked cell at $i", intArgs=(/iCell/))
-                  calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
-                  calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)
-                  thickness(iCell) = 0.0_RKIND
-                  if (iCell <= nCellsSolve) localMaskCellCount = localMaskCellCount + 1
+                  seedMask(iCell) = 1
                endif
             endif
          enddo
+         deallocate(marineDynMarginMask)
+
+         ! grow mask includes floating ice cells that meet calving criteria but aren't seeds
+         do iCell = 1, nCells
+            if (seedMask(iCell) == 0 .and. &
+                li_mask_is_floating_ice(cellMask(iCell)) .and. &
+                (calvingMask(iCell) >= 1)) then
+               if ( (.not. config_require_extensional_stresses_for_mask_calving) .or. &
+                    (hydrofractureVulnerabilityMask(iCell) == 1) ) then
+                  growMask(iCell) = 1
+               endif
+            endif
+         enddo
+
+         ! flood fill to ensure only vulnerable cells connected to marine margin are marked
+         call li_flood_fill(domain)
+
+         ! === apply calving to flood-filled cells ===
+         do iCell = 1, nCells
+            if (seedMask(iCell) == 1) then
+               calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
+               calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)
+               thickness(iCell) = 0.0_RKIND
+               if (iCell <= nCellsSolve) localMaskCellCount = localMaskCellCount + 1
+            endif
+         enddo
+
+         ! deallocate scratch fields used for flood fill
+         call mpas_deallocate_scratch_field(seedMaskField, single_block_in=.true.)
+         call mpas_deallocate_scratch_field(growMaskField, single_block_in=.true.)
 
          call mpas_dmpar_sum_int(domain % dminfo, localMaskCellCount, globalMaskCellCount)
          call mpas_log_write("Mask calving applied.  Removed $i floating cells with mask.", intArgs=(/globalMaskCellCount/))
