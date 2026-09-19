@@ -4147,7 +4147,7 @@ module li_calving
             tauMaxForCalving = meanA**(-1.0_RKIND / config_flowLawExponent) * &
                 eEff**((1.0_RKIND - config_flowLawExponent) / config_flowLawExponent) * &
                 strainRateEnhancementForCalving(iCell) * eMax(iCell)
-            dryCrevasseDepth = tauMaxForCalving / (config_ice_density * gravity)
+            dryCrevasseDepth = max(0.0_RKIND, tauMaxForCalving) / (config_ice_density * gravity)
             ! Crevasses can only be water-filled if SMB is negative
             if (sfcMassBalApplied(iCell) < 0.0_RKIND) then
                waterAvailable = 1.0_RKIND
@@ -4160,7 +4160,7 @@ module li_calving
             ! Use dry crevasse depth to calculate basal crevasse depth,
             ! after Nick et al. (2010) eq 6
             basalCrevasseDepth(iCell) = &
-                max(0.0, (dryCrevasseDepth - max(0.0_RKIND, thickness(iCell) + &
+                max(0.0_RKIND, (dryCrevasseDepth - max(0.0_RKIND, thickness(iCell) + &
                  config_ocean_density / config_ice_density * bedTopography(iCell)))) * &
                 config_ice_density / (config_ocean_density - config_ice_density)
             damage(iCell) = min(1.0_RKIND, (surfaceCrevasseDepth(iCell) + &
