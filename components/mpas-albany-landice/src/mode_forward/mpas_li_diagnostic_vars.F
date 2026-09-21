@@ -440,12 +440,25 @@ contains
       call mpas_pool_get_config(liConfigs, 'config_flowLawExponent', config_flowLawExponent)
 
       ! Validate that flowLawExponent is compatible with flowParamA_calculation
+      ! Note: Exact floating-point comparison is appropriate here because config_flowLawExponent
+      ! is read from the namelist (not computed), and typical values (3.0, 4.0) are exactly
+      ! representable in IEEE 754 floating-point arithmetic.
       if (config_flowLawExponent /= 3.0_RKIND) then
          if (trim(config_flowParamA_calculation) == 'constant' .or. &
              trim(config_flowParamA_calculation) == 'PB1982' .or. &
              trim(config_flowParamA_calculation) == 'CP2010') then
             call mpas_log_write("config_flowParamA_calculation options 'constant', 'PB1982', and 'CP2010' " // &
                                 "are only valid for config_flowLawExponent = 3.0", MPAS_LOG_ERR)
+            err = 1
+            return
+         endif
+      endif
+
+      ! Validate that n=4 uses the correct parameterization
+      if (config_flowLawExponent == 4.0_RKIND) then
+         if (trim(config_flowParamA_calculation) /= 'Fan2025') then
+            call mpas_log_write("For config_flowLawExponent = 4.0, " // &
+                                "config_flowParamA_calculation must be set to 'Fan2025'", MPAS_LOG_ERR)
             err = 1
             return
          endif

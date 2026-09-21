@@ -1956,8 +1956,8 @@ module li_calving
              call mpas_log_write("config_use_Albany_flowA_eqn_for_vM not yet supported", MPAS_LOG_ERR)
              err = 1
           else
-             if (trim(config_flowParamA_calculation) /= "PB1982" .and. &
-                 trim(config_flowParamA_calculation) /= "Fan2025") then
+             if (.not. (trim(config_flowParamA_calculation) == "PB1982" .or. &
+                        trim(config_flowParamA_calculation) == "Fan2025")) then
                 call mpas_log_write("If using von Mises calving, config_flowParamA_calculation must be set to 'PB1982' or 'Fan2025'", MPAS_LOG_ERR)
                 err = 1
                 return
@@ -4105,8 +4105,8 @@ module li_calving
          return
       endif
 
-      if (trim(config_flowParamA_calculation) /= "PB1982" .and. &
-          trim(config_flowParamA_calculation) /= "Fan2025") then
+      if (.not. (trim(config_flowParamA_calculation) == "PB1982" .or. &
+                 trim(config_flowParamA_calculation) == "Fan2025")) then
          call mpas_log_write("When using crevasse depth calving, config_flowParamA_calculation must be set to 'PB1982' or 'Fan2025'", MPAS_LOG_ERR)
          err = 1
          return
