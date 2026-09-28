@@ -656,7 +656,7 @@ module li_calving
 
                   calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
                   call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
-                                                             calvingThicknessGrounded(iCell))
+                                                             calvingThicknessGrounded(iCell), do_augment=.true.)
                   thickness(iCell) = 0.0_RKIND
                   ! Assign flow speed to calving speed - this allows calculation of licalvf in ISMIP6 postprocessing
                   calvingVelocity(iCell) = surfaceSpeed(iCell)
@@ -974,7 +974,7 @@ module li_calving
          where (oceanMask == 1 .and. inactiveMarginMask == 0 .and. thickness > 0.0_RKIND)
             calvingThickness = thickness * calvingFraction
          endwhere
-         call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded)
+         call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded, do_augment=.false.)
          calvingThicknessFromThreshold = calvingThickness
 
          ! === apply calving ===
@@ -1052,7 +1052,7 @@ module li_calving
          where (li_mask_is_floating_ice(cellMask))
             calvingThickness = thickness * calvingFraction
          endwhere
-         call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded)
+         call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded, do_augment=.false.)
          calvingThicknessFromThreshold = calvingThickness
 
          ! === apply calving ===
@@ -1248,7 +1248,7 @@ module li_calving
                                                             thickness(connectedCellsList(n))
                   call li_update_calving_thickness_grounded(cellMask(connectedCellsList(n)), &
                                                              calvingThickness(connectedCellsList(n)), &
-                                                             calvingThicknessGrounded(connectedCellsList(n)))
+                                                             calvingThicknessGrounded(connectedCellsList(n)), do_augment=.true.)
                   calvingThicknessFromThreshold(connectedCellsList(n)) = &
                      calvingThicknessFromThreshold(connectedCellsList(n)) + thickness(connectedCellsList(n))
                   thickness(connectedCellsList(n)) = 0.0_RKIND
@@ -1284,7 +1284,7 @@ module li_calving
             if (li_mask_is_floating_ice(cellMask(iCell)) .and. seedMask(iCell) == 0) then
                   calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
                   call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
-                                                             calvingThicknessGrounded(iCell))
+                                                             calvingThicknessGrounded(iCell), do_augment=.true.)
                   calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)
                   thickness(iCell) = 0.0_RKIND
             endif
@@ -1370,7 +1370,7 @@ module li_calving
          where ( (li_mask_is_floating_ice(cellMask)) .and. (bedTopography < config_calving_topography + config_sea_level) )
             calvingThickness = thickness * calvingFraction
          endwhere
-         call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded)
+         call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded, do_augment=.false.)
          calvingThicknessFromThreshold = calvingThickness
 
          ! === apply calving ===
@@ -1529,7 +1529,7 @@ module li_calving
                                               applyToFloating, applyToGroundingLine, domain, calvingCFLdt, dtCalvingCFLratio, &
                                               totalRatebasedCalvedVolume, totalRatebasedUncalvedVolume, err_tmp)
          err = ior(err, err_tmp)
-         call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded)
+         call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded, do_augment=.false.)
 
          if ( trim(config_damage_calving_method) == 'none' ) then
             ! do nothing
@@ -1587,7 +1587,7 @@ module li_calving
             if (calvingFrontMask(iCell) == 1 .and. thickness(iCell) < config_calving_thickness) then
                calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
                call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
-                                                          calvingThicknessGrounded(iCell))
+                                                          calvingThicknessGrounded(iCell), do_augment=.true.)
                thickness(iCell) = 0.0_RKIND
             endif
          enddo
@@ -1612,7 +1612,7 @@ module li_calving
               if (.not. dynamicNeighbor) then  ! calve this ice
                  calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
                  call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
-                                                            calvingThicknessGrounded(iCell))
+                                                            calvingThicknessGrounded(iCell), do_augment=.true.)
                  thickness(iCell) = 0.0_RKIND
                  calvingSubtotal = calvingSubtotal + calvingThickness(iCell) * areaCell(iCell)
               endif
@@ -1764,7 +1764,7 @@ module li_calving
                                               totalUnablatedVolume=totalRatebasedUncalvedVolume, &
                                               err=err_tmp)
          err = ior(err, err_tmp)
-         call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded)
+         call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded, do_augment=.false.)
 
          ! === apply calving ===
          thickness(:) = thickness(:) - calvingThickness(:)
@@ -1789,7 +1789,7 @@ module li_calving
             if (calvingFrontMask(iCell) == 1 .and. thickness(iCell) < config_calving_thickness) then
                calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
                call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
-                                                          calvingThicknessGrounded(iCell))
+                                                          calvingThicknessGrounded(iCell), do_augment=.true.)
                thickness(iCell) = 0.0_RKIND
             endif
          enddo
@@ -1814,7 +1814,7 @@ module li_calving
               if (.not. dynamicNeighbor) then  ! calve this ice
                  calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
                  call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
-                                                            calvingThicknessGrounded(iCell))
+                                                            calvingThicknessGrounded(iCell), do_augment=.true.)
                  thickness(iCell) = 0.0_RKIND
                  calvingSubtotal = calvingSubtotal + calvingThickness(iCell) * areaCell(iCell)
               endif
@@ -2141,7 +2141,7 @@ module li_calving
                                               calvingCFLdt, dtCalvingCFLratio, &
                                               totalRatebasedCalvedVolume, totalRatebasedUncalvedVolume, err_tmp)
           err = ior(err, err_tmp)
-          call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded)
+          call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded, do_augment=.false.)
          ! Update halos on calvingThickness or faceMeltingThickness before
          ! applying it.
          ! Testing seemed to indicate this is not necessary, but I don't
@@ -2163,7 +2163,7 @@ module li_calving
                      li_mask_is_dynamic_ice(cellMask(iCell)) ) then
                      calvingThickness(iCell) = thickness(iCell)
                      call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
-                                                                calvingThicknessGrounded(iCell))
+                                                                calvingThicknessGrounded(iCell), do_augment=.false.)
                 elseif ( li_mask_is_floating_ice(cellMask(icell)) .and. &
                     (.not. li_mask_is_dynamic_ice(cellMask(iCell))) ) then
                     nGroundedNeighbors = 0
@@ -2176,7 +2176,7 @@ module li_calving
                     if ( nGroundedNeighbors == 0 ) then
                        calvingThickness(iCell) = thickness(iCell)
                        call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
-                                                                  calvingThicknessGrounded(iCell))
+                                                                  calvingThicknessGrounded(iCell), do_augment=.false.)
                     endif
                 endif
              enddo
@@ -2482,7 +2482,7 @@ module li_calving
                                               totalUnablatedVolume=totalRatebasedUncalvedVolume, &
                                               err=err_tmp)
       err = ior(err, err_tmp)
-      call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded)
+      call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded, do_augment=.false.)
 
       ! Update halos on calvingThickness before applying it.
       ! NOTE: THIS WILL NOT WORK ON MULTIPLE BLOCKS PER PROCESSOR
@@ -3550,7 +3550,7 @@ module li_calving
                                               totalUnablatedVolume=totalRatebasedUncalvedVolume, &
                                               err=err_tmp)
              err = ior(err, err_tmp)
-             call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded)
+             call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded, do_augment=.false.)
          elseif (trim(config_damage_calving_method) == 'threshold') then
              call apply_calving_damage_threshold(meshPool, geometryPool, scratchPool, domain, err_tmp)
              err = ior(err, err_tmp)
@@ -3574,7 +3574,7 @@ module li_calving
             if (calvingFrontMask(iCell) == 1 .and. thickness(iCell) < config_calving_thickness) then
                calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
                call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
-                                                          calvingThicknessGrounded(iCell))
+                                                          calvingThicknessGrounded(iCell), do_augment=.true.)
                thickness(iCell) = 0.0_RKIND
             endif
          enddo
@@ -3598,7 +3598,7 @@ module li_calving
               if (.not. dynamicNeighbor) then  ! calve this ice
                  calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
                  call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
-                                                            calvingThicknessGrounded(iCell))
+                                                            calvingThicknessGrounded(iCell), do_augment=.true.)
                  thickness(iCell) = 0.0_RKIND
                  calvingSubtotal = calvingSubtotal + calvingThickness(iCell) * areaCell(iCell)
               endif
@@ -4418,14 +4418,14 @@ module li_calving
                   ! this is a thin neighbor - remove the whole cell volume
                   calvingThickness(jCell) = thickness(jCell)
                   call li_update_calving_thickness_grounded(cellMask(jCell), calvingThickness(jCell), &
-                                                             calvingThicknessGrounded(jCell))
+                                                             calvingThicknessGrounded(jCell), do_augment=.false.)
                   calvingThicknessFromThreshold(jCell) = calvingThicknessFromThreshold(jCell) + thickness(jCell)
                endif
             enddo
 
             calvingThickness(iCell) = thickness(iCell)
             call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
-                                                       calvingThicknessGrounded(iCell))
+                                                       calvingThicknessGrounded(iCell), do_augment=.false.)
             calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)
          endif ! if cell is calving margin
 
@@ -4640,7 +4640,7 @@ module li_calving
             if (seedMask(iCell) == 1) then
                calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
                call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
-                                                          calvingThicknessGrounded(iCell))
+                                                          calvingThicknessGrounded(iCell), do_augment=.true.)
                calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)
                thickness(iCell) = 0.0_RKIND
                if (iCell <= nCellsSolve) localMaskCellCount = localMaskCellCount + 1
@@ -4881,7 +4881,7 @@ module li_calving
             if (seedMask(iCell) == 0 .and. li_mask_is_floating_ice(cellMask(iCell))) then
                calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)  ! remove any remaining ice here
                call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
-                                                          calvingThicknessGrounded(iCell))
+                                                          calvingThicknessGrounded(iCell), do_augment=.true.)
                calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)  ! remove any remaining ice here
                thickness(iCell) = 0.0_RKIND
                localIcebergCellCount = localIcebergCellCount + 1
@@ -5113,13 +5113,14 @@ module li_calving
 !>  calvingThickness for cells originating from a grounded margin.
 !-----------------------------------------------------------------------
 
-   subroutine li_update_calving_thickness_grounded_0d(cellMask, calvingThickness, calvingThicknessGrounded)
+   subroutine li_update_calving_thickness_grounded_0d(cellMask, calvingThickness, calvingThicknessGrounded, do_augment)
 
       !-----------------------------------------------------------------
       ! input variables
       !-----------------------------------------------------------------
       integer, intent(in) :: cellMask
       real (kind=RKIND), intent(in) :: calvingThickness
+      logical, intent(in) :: do_augment ! If true, perform augment-assignment (+=) rather than direct assignment
 
       !-----------------------------------------------------------------
       ! input/output variables
@@ -5128,7 +5129,11 @@ module li_calving
 
       if (calvingThickness > 0.0_RKIND) then
          if (li_mask_is_grounded_ice(cellMask) .or. li_mask_is_grounded_floating_fringe(cellMask)) then
-            calvingThicknessGrounded = calvingThickness
+            if (do_augment) then
+               calvingThicknessGrounded = calvingThicknessGrounded + calvingThickness
+            else
+               calvingThicknessGrounded = calvingThickness
+            endif
          endif
       endif
 
@@ -5136,13 +5141,14 @@ module li_calving
    end subroutine li_update_calving_thickness_grounded_0d
 
 
-   subroutine li_update_calving_thickness_grounded_1d(cellMask, calvingThickness, calvingThicknessGrounded)
+   subroutine li_update_calving_thickness_grounded_1d(cellMask, calvingThickness, calvingThicknessGrounded, do_augment)
 
       !-----------------------------------------------------------------
       ! input variables
       !-----------------------------------------------------------------
       integer, dimension(:), intent(in) :: cellMask
       real (kind=RKIND), dimension(:), intent(in) :: calvingThickness
+      logical, intent(in) :: do_augment ! If true, perform augment-assignment (+=) rather than direct assignment
 
       !-----------------------------------------------------------------
       ! input/output variables
@@ -5155,7 +5161,7 @@ module li_calving
       integer :: iCell
 
       do iCell = 1, size(calvingThickness)
-         call li_update_calving_thickness_grounded_0d(cellMask(iCell), calvingThickness(iCell), calvingThicknessGrounded(iCell))
+         call li_update_calving_thickness_grounded_0d(cellMask(iCell), calvingThickness(iCell), calvingThicknessGrounded(iCell), do_augment)
       enddo
 
    !--------------------------------------------------------------------
