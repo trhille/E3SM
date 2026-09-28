@@ -76,7 +76,7 @@ module li_calving
 !> (3) Calve ice based on an ice thickness threshold
 !-----------------------------------------------------------------------
 
-   subroutine li_calve_ice(domain, err, solveVeloAfterCalving)
+   subroutine li_calve_ice(domain, cellMaskPrev, err, solveVeloAfterCalving)
 
       use li_advection
 
@@ -89,6 +89,7 @@ module li_calving
       !-----------------------------------------------------------------
       type (domain_type), intent(inout) :: &
          domain          !< Input/Output: domain object
+      integer, dimension(:), intent(in), target :: cellMaskPrev
 
       !-----------------------------------------------------------------
       ! output variables
@@ -112,6 +113,7 @@ module li_calving
       logical, pointer :: config_print_calving_info, config_data_calving
       logical, pointer :: config_apply_calving_mask
       real(kind=RKIND), pointer :: config_calving_timescale
+      logical, pointer :: config_restore_calving_front
 
       integer, pointer :: nCells, nCellsSolve
       integer, pointer :: config_number_of_blocks
@@ -174,6 +176,7 @@ module li_calving
       call mpas_pool_get_config(liConfigs, 'config_print_calving_info', config_print_calving_info)
       call mpas_pool_get_config(liConfigs, 'config_data_calving', config_data_calving)
       call mpas_pool_get_config(liConfigs, 'config_number_of_blocks', config_number_of_blocks)
+      call mpas_pool_get_config(liConfigs, 'config_restore_calving_front', config_restore_calving_front)
 
       call mpas_pool_get_subpool(domain % blocklist % structs, 'geometry', geometryPool)
       call mpas_pool_get_field(geometryPool, 'cellMaskTemporary', cellMaskTemporaryField)
@@ -403,7 +406,12 @@ module li_calving
          call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
          call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
          call mpas_pool_get_array(geometryPool, 'calvingThicknessGrounded', calvingThicknessGrounded)
-         cellMaskBeforeCalving => cellMaskTemporaryField % array
+
+         if (config_restore_calving_front) then
+            cellMaskBeforeCalving => cellMaskPrev
+         else
+            cellMaskBeforeCalving => cellMaskTemporaryField % array
+         endif
 
          calvingThicknessGrounded(:) = 0.0_RKIND
          do iCell = 1, nCells
