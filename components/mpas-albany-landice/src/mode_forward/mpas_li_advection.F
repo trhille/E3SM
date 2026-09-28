@@ -2208,7 +2208,7 @@ module li_advection
 
     end subroutine vertical_remap
 
-    subroutine li_grounded_to_floating(cellMaskOrig, cellMaskNew, thicknessNew, groundedToFloatingThickness, nCells)
+    subroutine li_grounded_to_floating(cellMaskOrig, cellMaskNew, thicknessOrig, thicknessNew, groundedToFloatingThickness, nCells)
       !-----------------------------------------------------------------
       ! input variables
       !-----------------------------------------------------------------
@@ -2217,6 +2217,9 @@ module li_advection
 
       integer, dimension(:), intent(in) :: &
          cellMaskNew          !< Input: mask for cells after advection
+
+      real(kind=RKIND), dimension(:), intent(in) :: &
+         thicknessOrig         !< Input: ice thickness before advection
 
       real(kind=RKIND), dimension(:), intent(in) :: &
          thicknessNew         !< Input: ice thickness after advection
@@ -2241,13 +2244,18 @@ module li_advection
       groundedToFloatingThickness(:) = 0.0_RKIND
 
       do iCell = 1, nCells
-        ! find locations that had grounded ice before but now have floating ice
+        ! find locations that had grounded ice before but now have *dynamic* floating ice
         if (li_mask_is_grounded_ice(cellMaskOrig(iCell)) .and. &
+            li_mask_is_dynamic_ice(cellMaskNew(iCell)) .and. &
             li_mask_is_floating_ice(cellMaskNew(iCell)) ) then
-           groundedToFloatingThickness(iCell) = thicknessNew(iCell)
-        ! find locations that had floating ice before but now have grounded ice
+           ! Use the old thickness when calculating volume lost from grounded ice domain
+           groundedToFloatingThickness(iCell) = thicknessOrig(iCell)
+
+        ! find locations that had *dynamic* floating ice before but now have grounded ice
         else if (li_mask_is_floating_ice(cellMaskOrig(iCell)) .and. &
+                 li_mask_is_dynamic_ice(cellMaskOrig(iCell)) .and. &
                  li_mask_is_grounded_ice(cellMaskNew(iCell)) ) then
+           ! Use the new thickness when calculating volume gained in grounded ice domain
            groundedToFloatingThickness(iCell) = -1.0_RKIND * thicknessNew(iCell)
         endif
       enddo

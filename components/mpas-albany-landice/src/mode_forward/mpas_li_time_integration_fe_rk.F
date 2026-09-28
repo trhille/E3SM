@@ -579,7 +579,7 @@ module li_time_integration_fe_rk
 
       ! Calculate volume converted from grounded to floating
       ! This needs to be determined after SMB/BMB are applied because those can change floating/grounded state
-      call li_grounded_to_floating(cellMaskPrev, cellMask, thickness, groundedToFloatingThickness, nCells)
+      call li_grounded_to_floating(cellMaskPrev, cellMask, sum(layerThicknessPrev, 1), thickness, groundedToFloatingThickness, nCells)
 
       sfcMassBalApplied(:) = sfcMassBalAccum(:)
       groundedSfcMassBalApplied(:) = groundedSfcMassBalAccum(:)
