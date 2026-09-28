@@ -76,7 +76,7 @@ module li_calving
 !> (3) Calve ice based on an ice thickness threshold
 !-----------------------------------------------------------------------
 
-   subroutine li_calve_ice(domain, cellMaskPrev, err, solveVeloAfterCalving)
+   subroutine li_calve_ice(domain, err, solveVeloAfterCalving)
 
       use li_advection
 
@@ -89,7 +89,6 @@ module li_calving
       !-----------------------------------------------------------------
       type (domain_type), intent(inout) :: &
          domain          !< Input/Output: domain object
-      integer, dimension(:), intent(in) :: cellMaskPrev
 
       !-----------------------------------------------------------------
       ! output variables
@@ -113,7 +112,6 @@ module li_calving
       logical, pointer :: config_print_calving_info, config_data_calving
       logical, pointer :: config_apply_calving_mask
       real(kind=RKIND), pointer :: config_calving_timescale
-      logical, pointer :: config_restore_calving_front
 
       integer, pointer :: nCells, nCellsSolve
       integer, pointer :: config_number_of_blocks
@@ -139,8 +137,6 @@ module li_calving
       real (kind=RKIND), dimension(:), pointer :: &
            calvingThicknessFromThreshold   ! thickness of ice that calves from threshold processes (computed in this subroutine)
 
-      real (kind=RKIND), dimension(:), pointer :: calvingThicknessGrounded ! diagnostic of calving originating from grounded margins
-
       real (kind=RKIND), dimension(:), pointer :: calvingVelocity
       real (kind=RKIND), dimension(:), pointer :: faceMeltSpeed
       real (kind=RKIND), dimension(:), pointer :: faceMeltingThickness
@@ -148,17 +144,14 @@ module li_calving
                                                   calvingStrainRateScaling
 
       real (kind=RKIND), dimension(:), pointer :: areaCell
-      integer, dimension(:), pointer :: nEdgesOnCell
-      integer, dimension(:,:), pointer :: cellsOnCell
 
       type (field1dReal), pointer :: originalThicknessField
 
       real (kind=RKIND), dimension(:), pointer :: originalThickness
 
       type (field1dInteger), pointer :: cellMaskTemporaryField
-      integer, dimension(:), allocatable :: cellMaskBeforeCalving
 
-      integer :: iCell, iEdge, iNeighbor
+      integer :: iCell
 
       real (kind=RKIND), parameter :: smallNumber = 1.0e-6_RKIND
 
@@ -176,15 +169,15 @@ module li_calving
       call mpas_pool_get_config(liConfigs, 'config_print_calving_info', config_print_calving_info)
       call mpas_pool_get_config(liConfigs, 'config_data_calving', config_data_calving)
       call mpas_pool_get_config(liConfigs, 'config_number_of_blocks', config_number_of_blocks)
-      call mpas_pool_get_config(liConfigs, 'config_restore_calving_front', config_restore_calving_front)
 
-      call mpas_pool_get_subpool(domain % blocklist % structs, 'geometry', geometryPool)
-      call mpas_pool_get_field(geometryPool, 'cellMaskTemporary', cellMaskTemporaryField)
-      call mpas_allocate_scratch_field(cellMaskTemporaryField, .true.)
-      call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
-      ! Store cellMask prior to calving
-      cellMaskTemporaryField % array(:) = cellMask(:)
-
+      if (present(solveVeloAfterCalving)) then
+         call mpas_pool_get_subpool(domain % blocklist % structs, 'geometry', geometryPool)
+         call mpas_pool_get_field(geometryPool, 'cellMaskTemporary', cellMaskTemporaryField)
+         call mpas_allocate_scratch_field(cellMaskTemporaryField, .true.)
+         call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
+         ! Store cellMask prior to calving
+         cellMaskTemporaryField % array(:) = cellMask(:)
+      endif
 
       ! calvingThickness is zeroed at the beginning of the time step in
       ! li_time_integrator_forwardeuler_rungekutta for accuracy of accumulated calvingThickness.
@@ -244,22 +237,23 @@ module li_calving
       ! However, the eigencalving method requires multiple applications of the calvingThickness
       ! to the thickness.  So the simplest method to apply data calving is to store the old
       ! thickness and then set it back when we are done.
-      call mpas_pool_get_subpool(domain % blocklist % structs, 'scratch', scratchPool)
-      call mpas_pool_get_field(scratchPool, 'workCell2',  originalThicknessField)
-      call mpas_allocate_scratch_field(originalThicknessField, single_block_in = .false.)
-      block => domain % blocklist
-      do while (associated(block))
-         call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
-         call mpas_pool_get_subpool(block % structs, 'scratch', scratchPool)
-         call mpas_pool_get_array(geometryPool, 'thickness', thickness)
-         call mpas_pool_get_array(scratchPool, 'workCell2', originalThickness)
+      if ( config_data_calving .or. present(solveVeloAfterCalving) ) then
+         call mpas_pool_get_subpool(domain % blocklist % structs, 'scratch', scratchPool)
+         call mpas_pool_get_field(scratchPool, 'workCell2',  originalThicknessField)
+         call mpas_allocate_scratch_field(originalThicknessField, single_block_in = .false.)
+         block => domain % blocklist
+         do while (associated(block))
+            call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
+            call mpas_pool_get_subpool(block % structs, 'scratch', scratchPool)
+            call mpas_pool_get_array(geometryPool, 'thickness', thickness)
+            call mpas_pool_get_array(scratchPool, 'workCell2', originalThickness)
 
-         ! Store old thickness here
-         originalThickness(:) = thickness(:)
+            ! Store old thickness here
+            originalThickness(:) = thickness(:)
 
-         block => block % next
-      end do
-
+            block => block % next
+         end do
+      endif
       
       ! compute calvingThickness based on the calving_config option
       if (trim(config_calving) == 'none') then
@@ -395,50 +389,6 @@ module li_calving
 
          block => block % next
       end do
-
-      ! Assign calving thickness to grounded origin where applicable (for diagnostic purposes)
-      block => domain % blocklist
-      do while (associated(block))
-         call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
-         call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
-         call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
-         call mpas_pool_get_array(meshPool, 'cellsOnCell', cellsOnCell)
-         call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
-         call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
-         call mpas_pool_get_array(geometryPool, 'calvingThicknessGrounded', calvingThicknessGrounded)
-
-         allocate(cellMaskBeforeCalving(nCells+1))
-         if (config_restore_calving_front) then
-            cellMaskBeforeCalving(:) = cellMaskPrev(:)
-         else
-            cellMaskBeforeCalving(:) = cellMaskTemporaryField % array(:)
-         endif
-
-         calvingThicknessGrounded(:) = 0.0_RKIND
-         do iCell = 1, nCells
-            if (calvingThickness(iCell) > 0.0_RKIND) then
-               if (li_mask_is_grounded_ice(cellMaskBeforeCalving(iCell))) then
-                  calvingThicknessGrounded(iCell) = calvingThickness(iCell)
-               elseif (li_mask_is_floating_ice(cellMaskBeforeCalving(iCell)) .and. &
-                       .not. li_mask_is_dynamic_ice(cellMaskBeforeCalving(iCell))) then
-                  ! check if there was a grounded neighbor, meaning this was the floating fringe
-                  do iEdge = 1, nEdgesOnCell(iCell)
-                     iNeighbor = cellsOnCell(iEdge, iCell)
-                     if (li_mask_is_grounded_ice(cellMaskBeforeCalving(iNeighbor)) .and. &
-                         li_mask_is_dynamic_ice(cellMaskBeforeCalving(iNeighbor))) then
-                        calvingThicknessGrounded(iCell) = calvingThickness(iCell)
-                        exit ! no need to keep searching
-                     endif
-                  enddo
-               endif
-            endif ! if calving occurred here
-         enddo
-
-         deallocate(cellMaskBeforeCalving)
-
-         block => block % next
-      end do
-
       if (present(solveVeloAfterCalving)) then
          call mpas_pool_get_array(meshPool, 'areaCell', areaCell)
          call mpas_pool_get_dimension(meshPool, 'nCellsSolve', nCellsSolve)
@@ -451,10 +401,12 @@ module li_calving
          else
             solveVeloAfterCalving = .false.
          endif
+         call mpas_deallocate_scratch_field(cellMaskTemporaryField, .true.)
       endif
-      call mpas_deallocate_scratch_field(cellMaskTemporaryField, .true.)
 
-      call mpas_deallocate_scratch_field(originalThicknessField, single_block_in=.false.)
+      if ( config_data_calving .or. present(solveVeloAfterCalving) ) then
+         call mpas_deallocate_scratch_field(originalThicknessField, single_block_in=.false.)
+      endif
 
       ! === error check
       if (err > 0) then

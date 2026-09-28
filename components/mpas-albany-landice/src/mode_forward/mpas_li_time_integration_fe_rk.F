@@ -610,9 +610,9 @@ module li_time_integration_fe_rk
 
       ! ice calving
       if ( config_update_velocity_before_calving ) then
-         call li_calve_ice(domain, cellMaskPrev,err_tmp, solveVeloAfterCalving)
+         call li_calve_ice(domain, err_tmp, solveVeloAfterCalving)
       else
-         call li_calve_ice(domain, cellMaskPrev, err_tmp)
+         call li_calve_ice(domain, err_tmp)
          solveVeloAfterCalving = .true.
       endif
 

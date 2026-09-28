@@ -879,7 +879,6 @@ module li_core
       character(len=StrKIND), pointer :: config_velocity_solver
       character(len=StrKIND), pointer :: config_calving
       character(len=StrKIND), pointer :: config_damage_calving_method
-      integer, dimension(:), pointer :: cellMask
       ! Variables needed for printing timestamps
       type (MPAS_Time_Type) :: currTime
       character(len=StrKIND) :: timeStamp
@@ -977,9 +976,7 @@ module li_core
          deltatTemp = deltat
          deltat = 0.0_RKIND
 
-         ! cellMask won't be used here, but we need it to be passed to li_calve_ice
-         call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
-         call li_calve_ice(domain, cellMask, err_tmp)
+         call li_calve_ice(domain, err_tmp)
          err = ior(err, err_tmp)
 
          ! Restore appropriate value for dt
