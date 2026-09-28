@@ -55,6 +55,12 @@ module li_calving
    !
    !--------------------------------------------------------------------
 
+   ! interface for updating calvingThicknessGrounded, which can be called with
+   ! either a single cell (scalar arguments) or with whole arrays
+   interface li_update_calving_thickness_grounded
+      module procedure li_update_calving_thickness_grounded_0d
+      module procedure li_update_calving_thickness_grounded_1d
+   end interface
 
 !***********************************************************************
    contains
@@ -487,6 +493,7 @@ module li_calving
            calvingVelocity,  &
            calvingThickness, & ! thickness of ice that calves
                                ! > 0 for cells below sea level that were initially ice-free and now have ice
+           calvingThicknessGrounded, & ! subset of calvingThickness originating from grounded ice
            restoreThickness    ! thickness of ice that is added to restore the calving front to its initial position
                                ! > 0 for cells below sea level that were initially ice-covered and now have very thin or no ice
 
@@ -542,6 +549,7 @@ module li_calving
          call mpas_pool_get_array(geometryPool, 'thickness', thickness)
          call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
          call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
+         call mpas_pool_get_array(geometryPool, 'calvingThicknessGrounded', calvingThicknessGrounded)
          call mpas_pool_get_array(geometryPool, 'restoreThickness', restoreThickness)
          call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
          call mpas_pool_get_array(geometryPool, 'calvingVelocity', calvingVelocity)
@@ -647,6 +655,8 @@ module li_calving
                   endif
 
                   calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
+                  call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+                                                             calvingThicknessGrounded(iCell))
                   thickness(iCell) = 0.0_RKIND
                   ! Assign flow speed to calving speed - this allows calculation of licalvf in ISMIP6 postprocessing
                   calvingVelocity(iCell) = surfaceSpeed(iCell)
@@ -796,7 +806,12 @@ module li_calving
            calvingThickness    ! thickness of ice that calves (computed in this subroutine)
 
       real (kind=RKIND), dimension(:), pointer :: &
+           calvingThicknessGrounded    ! subset of calvingThickness originating from grounded ice
+
+      real (kind=RKIND), dimension(:), pointer :: &
            calvingThicknessFromThreshold    ! thickness of ice that calves (computed in this subroutine)
+
+      integer, dimension(:), pointer :: cellMask
 
       integer, pointer :: nCells
       integer :: iCell, iCellOnCell, iCellNeighbor
@@ -846,7 +861,9 @@ module li_calving
          call mpas_pool_get_array(geometryPool, 'thickness', thickness)
          call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
          call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
+         call mpas_pool_get_array(geometryPool, 'calvingThicknessGrounded', calvingThicknessGrounded)
          call mpas_pool_get_array(geometryPool, 'calvingThicknessFromThreshold', calvingThicknessFromThreshold)
+         call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
 
          ! get scratch fields for calving
          ! 'true' flag means to allocate the field for a single block
@@ -864,6 +881,7 @@ module li_calving
 
          ! Initialize
          calvingThickness = 0.0_RKIND
+         calvingThicknessGrounded = 0.0_RKIND
 
          ! Identify cells that are active-for-calving:
          ! (1) Grounded ice with thickness > config_dynamic_thickness
@@ -956,6 +974,7 @@ module li_calving
          where (oceanMask == 1 .and. inactiveMarginMask == 0 .and. thickness > 0.0_RKIND)
             calvingThickness = thickness * calvingFraction
          endwhere
+         call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded)
          calvingThicknessFromThreshold = calvingThickness
 
          ! === apply calving ===
@@ -1006,6 +1025,7 @@ module li_calving
       type (mpas_pool_type), pointer :: geometryPool
       type (mpas_pool_type), pointer :: meshPool
       real (kind=RKIND), dimension(:), pointer :: calvingThickness    ! thickness of ice that calves (computed in this subroutine)
+      real (kind=RKIND), dimension(:), pointer :: calvingThicknessGrounded    ! subset of calvingThickness originating from grounded ice
       real (kind=RKIND), dimension(:), pointer :: calvingThicknessFromThreshold    ! thickness of ice that calves (computed in this subroutine)
       real (kind=RKIND), dimension(:), pointer :: thickness
       integer, dimension(:), pointer :: cellMask
@@ -1020,16 +1040,19 @@ module li_calving
          call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
          call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
          call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
+         call mpas_pool_get_array(geometryPool, 'calvingThicknessGrounded', calvingThicknessGrounded)
          call mpas_pool_get_array(geometryPool, 'calvingThicknessFromThreshold', calvingThicknessFromThreshold)
          call mpas_pool_get_array(geometryPool, 'thickness', thickness)
          call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
 
          calvingThickness = 0.0_RKIND
+         calvingThicknessGrounded = 0.0_RKIND
 
          ! Note: The floating_ice mask includes all floating ice, both inactive and active
          where (li_mask_is_floating_ice(cellMask))
             calvingThickness = thickness * calvingFraction
          endwhere
+         call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded)
          calvingThicknessFromThreshold = calvingThickness
 
          ! === apply calving ===
@@ -1061,6 +1084,7 @@ module li_calving
       type (mpas_pool_type), pointer :: scratchPool, meshPool, geometryPool, velocityPool
       logical, pointer :: config_remove_small_islands
       real (kind=RKIND), dimension(:), pointer :: calvingThickness    ! thickness of ice that calves (computed in this subroutine)
+      real (kind=RKIND), dimension(:), pointer :: calvingThicknessGrounded    ! subset of calvingThickness originating from grounded ice
       real (kind=RKIND), dimension(:), pointer :: calvingThicknessFromThreshold    ! thickness of ice that calves (computed in this subroutine)
       real (kind=RKIND), dimension(:), pointer :: thickness
       real (kind=RKIND), dimension(:), pointer :: bedTopography
@@ -1093,6 +1117,7 @@ module li_calving
       call mpas_pool_get_array(meshPool, 'cellsOnCell', cellsOnCell)
       call mpas_pool_get_array(meshPool, 'nEdgesOnCell', nEdgesOnCell)
       call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
+      call mpas_pool_get_array(geometryPool, 'calvingThicknessGrounded', calvingThicknessGrounded)
       call mpas_pool_get_array(geometryPool, 'calvingThicknessFromThreshold', calvingThicknessFromThreshold)
       call mpas_pool_get_array(geometryPool, 'thickness', thickness)
       call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
@@ -1221,6 +1246,9 @@ module li_calving
                do n = 1, count
                   calvingThickness(connectedCellsList(n)) = calvingThickness(connectedCellsList(n)) + &
                                                             thickness(connectedCellsList(n))
+                  call li_update_calving_thickness_grounded(cellMask(connectedCellsList(n)), &
+                                                             calvingThickness(connectedCellsList(n)), &
+                                                             calvingThicknessGrounded(connectedCellsList(n)))
                   calvingThicknessFromThreshold(connectedCellsList(n)) = &
                      calvingThicknessFromThreshold(connectedCellsList(n)) + thickness(connectedCellsList(n))
                   thickness(connectedCellsList(n)) = 0.0_RKIND
@@ -1255,6 +1283,8 @@ module li_calving
          do iCell = 1, nCells
             if (li_mask_is_floating_ice(cellMask(iCell)) .and. seedMask(iCell) == 0) then
                   calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
+                  call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+                                                             calvingThicknessGrounded(iCell))
                   calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)
                   thickness(iCell) = 0.0_RKIND
             endif
@@ -1302,6 +1332,7 @@ module li_calving
       type (block_type), pointer :: block
       type (mpas_pool_type), pointer :: geometryPool, meshPool
       real (kind=RKIND), dimension(:), pointer :: calvingThickness    ! thickness of ice that calves (computed in this subroutine)
+      real (kind=RKIND), dimension(:), pointer :: calvingThicknessGrounded    ! subset of calvingThickness originating from grounded ice
       real (kind=RKIND), dimension(:), pointer :: calvingThicknessFromThreshold
       real(kind=RKIND), pointer :: config_calving_topography
       real(kind=RKIND), pointer :: config_sea_level
@@ -1327,16 +1358,19 @@ module li_calving
          call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
          call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
          call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
+         call mpas_pool_get_array(geometryPool, 'calvingThicknessGrounded', calvingThicknessGrounded)
          call mpas_pool_get_array(geometryPool, 'calvingThicknessFromThreshold', calvingThicknessFromThreshold)
          call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
          call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
          call mpas_pool_get_array(geometryPool, 'thickness', thickness)
 
          calvingThickness = 0.0_RKIND
+         calvingThicknessGrounded = 0.0_RKIND
 
          where ( (li_mask_is_floating_ice(cellMask)) .and. (bedTopography < config_calving_topography + config_sea_level) )
             calvingThickness = thickness * calvingFraction
          endwhere
+         call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded)
          calvingThicknessFromThreshold = calvingThickness
 
          ! === apply calving ===
@@ -1400,6 +1434,7 @@ module li_calving
       real (kind=RKIND), dimension(:), pointer :: angleEdge
       real (kind=RKIND), dimension(:), pointer :: thickness
       real (kind=RKIND), dimension(:), pointer :: calvingThickness
+      real (kind=RKIND), dimension(:), pointer :: calvingThicknessGrounded
       real (kind=RKIND), pointer :: calvingCFLdt
       real (kind=RKIND), pointer :: dtCalvingCFLratio
       integer, dimension(:,:), pointer :: cellsOnCell ! list of cells that neighbor each cell
@@ -1458,6 +1493,7 @@ module li_calving
          call mpas_pool_get_array(velocityPool, 'eMin', eMin)
          call mpas_pool_get_array(geometryPool, 'thickness', thickness)
          call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
+         call mpas_pool_get_array(geometryPool, 'calvingThicknessGrounded', calvingThicknessGrounded)
          call mpas_pool_get_array(geometryPool, 'calvingCFLdt', calvingCFLdt)
          call mpas_pool_get_array(geometryPool, 'dtCalvingCFLratio', dtCalvingCFLratio)
          call mpas_pool_get_array(geometryPool, 'totalRatebasedCalvedVolume', totalRatebasedCalvedVolume)
@@ -1493,6 +1529,7 @@ module li_calving
                                               applyToFloating, applyToGroundingLine, domain, calvingCFLdt, dtCalvingCFLratio, &
                                               totalRatebasedCalvedVolume, totalRatebasedUncalvedVolume, err_tmp)
          err = ior(err, err_tmp)
+         call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded)
 
          if ( trim(config_damage_calving_method) == 'none' ) then
             ! do nothing
@@ -1549,6 +1586,8 @@ module li_calving
          do iCell = 1, nCells
             if (calvingFrontMask(iCell) == 1 .and. thickness(iCell) < config_calving_thickness) then
                calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
+               call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+                                                          calvingThicknessGrounded(iCell))
                thickness(iCell) = 0.0_RKIND
             endif
          enddo
@@ -1572,6 +1611,8 @@ module li_calving
               enddo
               if (.not. dynamicNeighbor) then  ! calve this ice
                  calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
+                 call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+                                                            calvingThicknessGrounded(iCell))
                  thickness(iCell) = 0.0_RKIND
                  calvingSubtotal = calvingSubtotal + calvingThickness(iCell) * areaCell(iCell)
               endif
@@ -1635,6 +1676,7 @@ module li_calving
       real (kind=RKIND), dimension(:), pointer :: angleEdge
       real (kind=RKIND), dimension(:), pointer :: thickness
       real (kind=RKIND), dimension(:), pointer :: calvingThickness
+      real (kind=RKIND), dimension(:), pointer :: calvingThicknessGrounded
       real (kind=RKIND), dimension(:), pointer :: xvelmean, yvelmean
       real (kind=RKIND), pointer :: calvingCFLdt
       real (kind=RKIND), pointer :: dtCalvingCFLratio
@@ -1682,6 +1724,7 @@ module li_calving
          call mpas_pool_get_array(geometryPool, 'calvingVelocityData', calvingVelocityData)
          call mpas_pool_get_array(geometryPool, 'thickness', thickness)
          call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
+         call mpas_pool_get_array(geometryPool, 'calvingThicknessGrounded', calvingThicknessGrounded)
          call mpas_pool_get_array(geometryPool, 'calvingCFLdt', calvingCFLdt)
          call mpas_pool_get_array(geometryPool, 'dtCalvingCFLratio', dtCalvingCFLratio)
          call mpas_pool_get_array(geometryPool, 'totalRatebasedCalvedVolume', totalRatebasedCalvedVolume)
@@ -1721,6 +1764,7 @@ module li_calving
                                               totalUnablatedVolume=totalRatebasedUncalvedVolume, &
                                               err=err_tmp)
          err = ior(err, err_tmp)
+         call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded)
 
          ! === apply calving ===
          thickness(:) = thickness(:) - calvingThickness(:)
@@ -1744,6 +1788,8 @@ module li_calving
          do iCell = 1, nCells
             if (calvingFrontMask(iCell) == 1 .and. thickness(iCell) < config_calving_thickness) then
                calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
+               call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+                                                          calvingThicknessGrounded(iCell))
                thickness(iCell) = 0.0_RKIND
             endif
          enddo
@@ -1767,6 +1813,8 @@ module li_calving
               enddo
               if (.not. dynamicNeighbor) then  ! calve this ice
                  calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
+                 call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+                                                            calvingThicknessGrounded(iCell))
                  thickness(iCell) = 0.0_RKIND
                  calvingSubtotal = calvingSubtotal + calvingThickness(iCell) * areaCell(iCell)
               endif
@@ -1833,6 +1881,7 @@ module li_calving
       real (kind=RKIND), dimension(:), pointer :: eMax, eMin, &
                                         calvingVelocity, thickness, &
                                         xvelmean, yvelmean, calvingThickness, &
+                                        calvingThicknessGrounded, &
                                         floatingVonMisesThresholdStress, &
                                         groundedVonMisesThresholdStress, &
                                         surfaceSpeed
@@ -1901,6 +1950,7 @@ module li_calving
           call mpas_pool_get_array(velocityPool, 'yvelmean', yvelmean)
           call mpas_pool_get_array(velocityPool, 'surfaceSpeed', surfaceSpeed)
           call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
+          call mpas_pool_get_array(geometryPool, 'calvingThicknessGrounded', calvingThicknessGrounded)
           call mpas_pool_get_array(geometryPool, 'calvingVelocity', calvingVelocity)
           call mpas_pool_get_array(geometryPool, 'calvingCFLdt', calvingCFLdt)
           call mpas_pool_get_array(geometryPool, 'dtCalvingCFLratio', dtCalvingCFLratio)
@@ -2091,6 +2141,7 @@ module li_calving
                                               calvingCFLdt, dtCalvingCFLratio, &
                                               totalRatebasedCalvedVolume, totalRatebasedUncalvedVolume, err_tmp)
           err = ior(err, err_tmp)
+          call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded)
          ! Update halos on calvingThickness or faceMeltingThickness before
          ! applying it.
          ! Testing seemed to indicate this is not necessary, but I don't
@@ -2111,6 +2162,8 @@ module li_calving
                 if ( li_mask_is_floating_ice(cellMask(iCell)) .and. &
                      li_mask_is_dynamic_ice(cellMask(iCell)) ) then
                      calvingThickness(iCell) = thickness(iCell)
+                     call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+                                                                calvingThicknessGrounded(iCell))
                 elseif ( li_mask_is_floating_ice(cellMask(icell)) .and. &
                     (.not. li_mask_is_dynamic_ice(cellMask(iCell))) ) then
                     nGroundedNeighbors = 0
@@ -2122,6 +2175,8 @@ module li_calving
                     enddo
                     if ( nGroundedNeighbors == 0 ) then
                        calvingThickness(iCell) = thickness(iCell)
+                       call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+                                                                  calvingThicknessGrounded(iCell))
                     endif
                 endif
              enddo
@@ -2234,6 +2289,7 @@ module li_calving
       real (kind=RKIND), dimension(:), pointer ::  &
                                         calvingVelocity, thickness, &
                                         xvelmean, yvelmean, calvingThickness, &
+                                        calvingThicknessGrounded, &
                                         bedTopography
       real (kind=RKIND), pointer :: calvingCFLdt
       real (kind=RKIND), pointer :: dtCalvingCFLratio
@@ -2278,6 +2334,7 @@ module li_calving
       call mpas_pool_get_array(meshPool, 'dvEdge', dvEdge)
       call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
       call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
+      call mpas_pool_get_array(geometryPool, 'calvingThicknessGrounded', calvingThicknessGrounded)
       call mpas_pool_get_array(geometryPool, 'calvingVelocity', calvingVelocity)
       call mpas_pool_get_array(geometryPool, 'calvingCFLdt', calvingCFLdt)
       call mpas_pool_get_array(geometryPool, 'dtCalvingCFLratio', dtCalvingCFLratio)
@@ -2425,6 +2482,7 @@ module li_calving
                                               totalUnablatedVolume=totalRatebasedUncalvedVolume, &
                                               err=err_tmp)
       err = ior(err, err_tmp)
+      call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded)
 
       ! Update halos on calvingThickness before applying it.
       ! NOTE: THIS WILL NOT WORK ON MULTIPLE BLOCKS PER PROCESSOR
@@ -3377,6 +3435,7 @@ module li_calving
       real (kind=RKIND), dimension(:), pointer :: thickness
       real (kind=RKIND), dimension(:), pointer :: bedTopography
       real (kind=RKIND), dimension(:), pointer :: calvingThickness
+      real (kind=RKIND), dimension(:), pointer :: calvingThicknessGrounded
       real (kind=RKIND), dimension(:), pointer :: calvingVelocity
       real (kind=RKIND), pointer :: calvingCFLdt
       real (kind=RKIND), pointer :: dtCalvingCFLratio
@@ -3439,6 +3498,7 @@ module li_calving
          call mpas_pool_get_array(meshPool, 'dvEdge', dvEdge)
          call mpas_pool_get_array(meshPool, 'areaCell', areaCell)
          call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
+         call mpas_pool_get_array(geometryPool, 'calvingThicknessGrounded', calvingThicknessGrounded)
          call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
          call mpas_pool_get_array(geometryPool, 'thickness', thickness)
          call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
@@ -3487,6 +3547,7 @@ module li_calving
                                               totalUnablatedVolume=totalRatebasedUncalvedVolume, &
                                               err=err_tmp)
              err = ior(err, err_tmp)
+             call li_update_calving_thickness_grounded(cellMask, calvingThickness, calvingThicknessGrounded)
          elseif (trim(config_damage_calving_method) == 'threshold') then
              call apply_calving_damage_threshold(meshPool, geometryPool, scratchPool, domain, err_tmp)
              err = ior(err, err_tmp)
@@ -3509,6 +3570,8 @@ module li_calving
          do iCell = 1, nCells
             if (calvingFrontMask(iCell) == 1 .and. thickness(iCell) < config_calving_thickness) then
                calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
+               call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+                                                          calvingThicknessGrounded(iCell))
                thickness(iCell) = 0.0_RKIND
             endif
          enddo
@@ -3531,6 +3594,8 @@ module li_calving
               enddo
               if (.not. dynamicNeighbor) then  ! calve this ice
                  calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
+                 call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+                                                            calvingThicknessGrounded(iCell))
                  thickness(iCell) = 0.0_RKIND
                  calvingSubtotal = calvingSubtotal + calvingThickness(iCell) * areaCell(iCell)
               endif
@@ -4224,6 +4289,7 @@ module li_calving
       type (field1dInteger), pointer :: growMaskField
       integer, dimension(:), pointer :: seedMask, growMask !masks to pass to flood-fill routine
       real (kind=RKIND), dimension(:), pointer :: calvingThickness !< Output: the applied calving rate as a thickness
+      real (kind=RKIND), dimension(:), pointer :: calvingThicknessGrounded !< Output: the applied calving thickness originating from grounded ice
       real (kind=RKIND), dimension(:), pointer :: calvingThicknessFromThreshold !< Output: the applied calving thickness from threshold processes
       real (kind=RKIND), dimension(:), pointer :: thickness, damage, bedTopography
       integer, dimension(:), pointer :: openOceanMask
@@ -4249,6 +4315,7 @@ module li_calving
       call mpas_pool_get_array(geometryPool, 'thickness', thickness)
       call mpas_pool_get_array(geometryPool, 'bedTopography', bedTopography)
       call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
+      call mpas_pool_get_array(geometryPool, 'calvingThicknessGrounded', calvingThicknessGrounded)
       call mpas_pool_get_array(geometryPool, 'calvingThicknessFromThreshold', calvingThicknessFromThreshold)
       call mpas_pool_get_array(geometryPool, 'damage', damage)
       call mpas_pool_get_array(geometryPool, 'damageCalvingThreshold', damageCalvingThreshold)
@@ -4347,11 +4414,15 @@ module li_calving
                if (li_mask_is_floating_ice(cellMask(jCell)) .and. .not. li_mask_is_dynamic_ice(cellMask(jCell))) then
                   ! this is a thin neighbor - remove the whole cell volume
                   calvingThickness(jCell) = thickness(jCell)
+                  call li_update_calving_thickness_grounded(cellMask(jCell), calvingThickness(jCell), &
+                                                             calvingThicknessGrounded(jCell))
                   calvingThicknessFromThreshold(jCell) = calvingThicknessFromThreshold(jCell) + thickness(jCell)
                endif
             enddo
 
             calvingThickness(iCell) = thickness(iCell)
+            call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+                                                       calvingThicknessGrounded(iCell))
             calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)
          endif ! if cell is calving margin
 
@@ -4405,6 +4476,7 @@ module li_calving
       integer, dimension(:), pointer :: seedMask, growMask !masks to pass to flood-fill routine
       real (kind=RKIND), dimension(:), pointer :: thickness
       real (kind=RKIND), dimension(:), pointer :: calvingThickness
+      real (kind=RKIND), dimension(:), pointer :: calvingThicknessGrounded
       real (kind=RKIND), dimension(:), pointer :: calvingThicknessFromThreshold
       real (kind=RKIND), dimension(:), pointer :: tauMax, tauMin
       integer, dimension(:), pointer :: calvingMask
@@ -4454,6 +4526,7 @@ module li_calving
          call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
          call mpas_pool_get_dimension(meshPool, 'nCellsSolve', nCellsSolve)
          call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
+         call mpas_pool_get_array(geometryPool, 'calvingThicknessGrounded', calvingThicknessGrounded)
          call mpas_pool_get_array(geometryPool, 'calvingThicknessFromThreshold', calvingThicknessFromThreshold)
          call mpas_pool_get_array(geometryPool, 'calvingMask', calvingMask)
          call mpas_pool_get_array(geometryPool, 'hydrofractureVulnerabilityMask', hydrofractureVulnerabilityMask)
@@ -4563,6 +4636,8 @@ module li_calving
          do iCell = 1, nCells
             if (seedMask(iCell) == 1) then
                calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)
+               call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+                                                          calvingThicknessGrounded(iCell))
                calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)
                thickness(iCell) = 0.0_RKIND
                if (iCell <= nCellsSolve) localMaskCellCount = localMaskCellCount + 1
@@ -4691,6 +4766,7 @@ module li_calving
       !integer, dimension(:), allocatable :: seedMaskOld !mask of where icebergs are removed, for debugging
 
       real (kind=RKIND), dimension(:), pointer :: calvingThickness    ! thickness of ice that calves (computed in this subroutine)
+      real (kind=RKIND), dimension(:), pointer :: calvingThicknessGrounded
       real (kind=RKIND), dimension(:), pointer :: calvingThicknessFromThreshold
       real (kind=RKIND), dimension(:), pointer :: thickness
       integer, dimension(:), pointer :: cellMask
@@ -4790,6 +4866,7 @@ module li_calving
          call mpas_pool_get_array(geometryPool, 'cellMask', cellMask)
          call mpas_pool_get_array(geometryPool, 'thickness', thickness)
          call mpas_pool_get_array(geometryPool, 'calvingThickness', calvingThickness)
+         call mpas_pool_get_array(geometryPool, 'calvingThicknessGrounded', calvingThicknessGrounded)
          call mpas_pool_get_array(geometryPool, 'calvingThicknessFromThreshold', calvingThicknessFromThreshold)
          call mpas_pool_get_dimension(geometryPool, 'nCells', nCells)
          call mpas_pool_get_dimension(geometryPool, 'nCellsSolve', nCellsSolve)
@@ -4800,6 +4877,8 @@ module li_calving
          do iCell = 1, nCellsSolve
             if (seedMask(iCell) == 0 .and. li_mask_is_floating_ice(cellMask(iCell))) then
                calvingThickness(iCell) = calvingThickness(iCell) + thickness(iCell)  ! remove any remaining ice here
+               call li_update_calving_thickness_grounded(cellMask(iCell), calvingThickness(iCell), &
+                                                          calvingThicknessGrounded(iCell))
                calvingThicknessFromThreshold(iCell) = calvingThicknessFromThreshold(iCell) + thickness(iCell)  ! remove any remaining ice here
                thickness(iCell) = 0.0_RKIND
                localIcebergCellCount = localIcebergCellCount + 1
@@ -5012,6 +5091,72 @@ module li_calving
       endif
 
    end subroutine calculate_facemelt_strainrate_enhancement
+
+
+!|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+!
+!  routine li_update_calving_thickness_grounded
+!
+!> \brief Update calvingThicknessGrounded wherever calvingThickness is assigned
+!> \author Matthew Hoffman
+!> \date   September 2026
+!> \details
+!>  calvingThicknessGrounded tracks the portion of calvingThickness that
+!>  originated from grounded ice, including the nondynamic floating fringe
+!>  attached to dynamic grounded ice.  This routine should be called
+!>  immediately after every assignment to calvingThickness, using the
+!>  cellMask value(s) applicable at that point, so that
+!>  calvingThicknessGrounded always reflects the current value of
+!>  calvingThickness for cells originating from a grounded margin.
+!-----------------------------------------------------------------------
+
+   subroutine li_update_calving_thickness_grounded_0d(cellMask, calvingThickness, calvingThicknessGrounded)
+
+      !-----------------------------------------------------------------
+      ! input variables
+      !-----------------------------------------------------------------
+      integer, intent(in) :: cellMask
+      real (kind=RKIND), intent(in) :: calvingThickness
+
+      !-----------------------------------------------------------------
+      ! input/output variables
+      !-----------------------------------------------------------------
+      real (kind=RKIND), intent(inout) :: calvingThicknessGrounded
+
+      if (calvingThickness > 0.0_RKIND) then
+         if (li_mask_is_grounded_ice(cellMask) .or. li_mask_is_grounded_floating_fringe(cellMask)) then
+            calvingThicknessGrounded = calvingThickness
+         endif
+      endif
+
+   !--------------------------------------------------------------------
+   end subroutine li_update_calving_thickness_grounded_0d
+
+
+   subroutine li_update_calving_thickness_grounded_1d(cellMask, calvingThickness, calvingThicknessGrounded)
+
+      !-----------------------------------------------------------------
+      ! input variables
+      !-----------------------------------------------------------------
+      integer, dimension(:), intent(in) :: cellMask
+      real (kind=RKIND), dimension(:), intent(in) :: calvingThickness
+
+      !-----------------------------------------------------------------
+      ! input/output variables
+      !-----------------------------------------------------------------
+      real (kind=RKIND), dimension(:), intent(inout) :: calvingThicknessGrounded
+
+      !-----------------------------------------------------------------
+      ! local variables
+      !-----------------------------------------------------------------
+      integer :: iCell
+
+      do iCell = 1, size(calvingThickness)
+         call li_update_calving_thickness_grounded_0d(cellMask(iCell), calvingThickness(iCell), calvingThicknessGrounded(iCell))
+      enddo
+
+   !--------------------------------------------------------------------
+   end subroutine li_update_calving_thickness_grounded_1d
 
 
 end module li_calving

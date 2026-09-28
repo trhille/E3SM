@@ -162,6 +162,11 @@ module li_mask
       module procedure li_mask_is_grounded_floating_fringe_intout_1d
       module procedure li_mask_is_grounded_floating_fringe_intout_0d
    end interface
+
+   interface li_mask_is_grounded_floating_fringe
+      module procedure li_mask_is_grounded_floating_fringe_logout_1d
+      module procedure li_mask_is_grounded_floating_fringe_logout_0d
+   end interface
 !--------------------------------------------------------------------
    !
    ! Private module variables
@@ -1001,6 +1006,20 @@ contains
 
       li_mask_is_grounded_floating_fringe_intout_0d = iand(mask, li_mask_ValueGroundedFloatingFringe) / li_mask_ValueGroundedFloatingFringe
    end function li_mask_is_grounded_floating_fringe_intout_0d
+
+   function li_mask_is_grounded_floating_fringe_logout_1d(mask)
+      integer, dimension(:), intent(in) :: mask
+      logical, dimension(size(mask)) :: li_mask_is_grounded_floating_fringe_logout_1d
+
+      li_mask_is_grounded_floating_fringe_logout_1d = ( iand(mask, li_mask_ValueGroundedFloatingFringe) == li_mask_ValueGroundedFloatingFringe )
+   end function li_mask_is_grounded_floating_fringe_logout_1d
+
+   function li_mask_is_grounded_floating_fringe_logout_0d(mask)
+      integer, intent(in) :: mask
+      logical :: li_mask_is_grounded_floating_fringe_logout_0d
+
+      li_mask_is_grounded_floating_fringe_logout_0d = ( iand(mask, li_mask_ValueGroundedFloatingFringe) == li_mask_ValueGroundedFloatingFringe )
+   end function li_mask_is_grounded_floating_fringe_logout_0d
 !***********************************************************************
 ! Private subroutines:
 !***********************************************************************
