@@ -443,8 +443,10 @@ contains
 
             ! regional sums of grounded ice volume over cells with ice (m^3)
             blockSumRegionGroundedIceVolume(iRegion) = blockSumRegionGroundedIceVolume(iRegion) + &
-            ( real(regionCellMasks(iRegion,iCell),RKIND) * areaCell(iCell) &
-              * thickness(iCell) * real(li_mask_is_grounded_ice_int(cellMask(iCell)),RKIND) )
+              real(regionCellMasks(iRegion,iCell),RKIND) * areaCell(iCell) * thickness(iCell) * &
+              (real(li_mask_is_grounded_ice_int(cellMask(iCell)),RKIND)  +  &
+              ! For the purposes of grounded ice volume, consider the grounded-floating fringe as part of the grounded ice volume
+               real(li_mask_is_grounded_floating_fringe_int(cellMask(iCell)),RKIND))
 
             ! regional sums of floating ice area over cells with ice (m^2)
             blockSumRegionFloatingIceArea(iRegion) = blockSumRegionFloatingIceArea(iRegion) + &

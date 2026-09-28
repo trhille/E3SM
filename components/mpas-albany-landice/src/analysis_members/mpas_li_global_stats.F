@@ -384,7 +384,10 @@ contains
             blockSumGroundedIceArea = blockSumGroundedIceArea + real(li_mask_is_grounded_ice_int(cellMask(iCell)),RKIND) &
                  * areaCell(iCell)
 
-            blockSumGroundedIceVolume = blockSumGroundedIceVolume + real(li_mask_is_grounded_ice_int(cellMask(iCell)),RKIND) &
+            blockSumGroundedIceVolume = blockSumGroundedIceVolume + &
+                (real(li_mask_is_grounded_ice_int(cellMask(iCell)),RKIND) + &
+                ! For the purposes of grounded MB, consider the grounded-floating fringe as part of the grounded ice volume
+                 real(li_mask_is_grounded_floating_fringe_int(cellMask(iCell)),RKIND)) &
                 * areaCell(iCell) * thickness(iCell)
 
             blockSumFloatingIceArea = blockSumFloatingIceArea + real(li_mask_is_floating_ice_int(cellMask(iCell)),RKIND) &
