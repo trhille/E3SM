@@ -381,8 +381,9 @@ contains
             blockSumVAF = blockSumVAF + real(li_mask_is_grounded_ice_int(cellMask(iCell)),RKIND) * areaCell(iCell) * &
                 ( thickness(iCell) + (rhow / rhoi) * min(0.0_RKIND, (bedTopography(iCell) - config_sea_level)) )
 
-            blockSumGroundedIceArea = blockSumGroundedIceArea + real(li_mask_is_grounded_ice_int(cellMask(iCell)),RKIND) &
-                 * areaCell(iCell)
+              blockSumGroundedIceArea = blockSumGroundedIceArea + &
+                 (real(li_mask_is_grounded_ice_int(cellMask(iCell)),RKIND) + &
+                  real(li_mask_is_grounded_floating_fringe_int(cellMask(iCell)),RKIND)) * areaCell(iCell)
 
             blockSumGroundedIceVolume = blockSumGroundedIceVolume + &
                 (real(li_mask_is_grounded_ice_int(cellMask(iCell)),RKIND) + &
@@ -390,8 +391,9 @@ contains
                  real(li_mask_is_grounded_floating_fringe_int(cellMask(iCell)),RKIND)) &
                 * areaCell(iCell) * thickness(iCell)
 
-            blockSumFloatingIceArea = blockSumFloatingIceArea + real(li_mask_is_floating_ice_int(cellMask(iCell)),RKIND) &
-                * areaCell(iCell)
+            blockSumFloatingIceArea = blockSumFloatingIceArea + &
+               (real(li_mask_is_floating_ice_int(cellMask(iCell)),RKIND) - &
+                real(li_mask_is_grounded_floating_fringe_int(cellMask(iCell)),RKIND)) * areaCell(iCell)
 
             blockSumFloatingIceVolume = blockSumFloatingIceVolume + &
                (real(li_mask_is_floating_ice_int(cellMask(iCell)),RKIND) - &

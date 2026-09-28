@@ -439,7 +439,8 @@ contains
             ! regional sums of grounded ice area over cells with ice (m^2)
             blockSumRegionGroundedIceArea(iRegion) = blockSumRegionGroundedIceArea(iRegion) + &
                ( real(regionCellMasks(iRegion,iCell),RKIND) * areaCell(iCell) &
-                * real(li_mask_is_grounded_ice_int(cellMask(iCell)),RKIND) )
+                * (real(li_mask_is_grounded_ice_int(cellMask(iCell)),RKIND) + &
+                   real(li_mask_is_grounded_floating_fringe_int(cellMask(iCell)),RKIND)) )
 
             ! regional sums of grounded ice volume over cells with ice (m^3)
             blockSumRegionGroundedIceVolume(iRegion) = blockSumRegionGroundedIceVolume(iRegion) + &
@@ -451,7 +452,8 @@ contains
             ! regional sums of floating ice area over cells with ice (m^2)
             blockSumRegionFloatingIceArea(iRegion) = blockSumRegionFloatingIceArea(iRegion) + &
               ( real(regionCellMasks(iRegion,iCell),RKIND) * areaCell(iCell) &
-                * real(li_mask_is_floating_ice_int(cellMask(iCell)),RKIND) )
+                        * (real(li_mask_is_floating_ice_int(cellMask(iCell)),RKIND) - &
+                            real(li_mask_is_grounded_floating_fringe_int(cellMask(iCell)),RKIND)) )
 
             ! regional sums of floating ice volume over cells with ice (m^3)
             blockSumRegionFloatingIceVolume(iRegion) = blockSumRegionFloatingIceVolume(iRegion) + &
