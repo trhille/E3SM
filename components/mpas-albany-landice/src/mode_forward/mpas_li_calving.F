@@ -89,7 +89,7 @@ module li_calving
       !-----------------------------------------------------------------
       type (domain_type), intent(inout) :: &
          domain          !< Input/Output: domain object
-      integer, dimension(:), intent(in), target :: cellMaskPrev
+      integer, dimension(:), intent(in) :: cellMaskPrev
 
       !-----------------------------------------------------------------
       ! output variables
@@ -156,7 +156,7 @@ module li_calving
       real (kind=RKIND), dimension(:), pointer :: originalThickness
 
       type (field1dInteger), pointer :: cellMaskTemporaryField
-      integer, dimension(:), pointer :: cellMaskBeforeCalving
+      integer, dimension(:), allocatable :: cellMaskBeforeCalving
 
       integer :: iCell, iEdge, iNeighbor
 
@@ -407,10 +407,11 @@ module li_calving
          call mpas_pool_get_dimension(meshPool, 'nCells', nCells)
          call mpas_pool_get_array(geometryPool, 'calvingThicknessGrounded', calvingThicknessGrounded)
 
+         allocate(cellMaskBeforeCalving(nCells+1))
          if (config_restore_calving_front) then
-            cellMaskBeforeCalving => cellMaskPrev
+            cellMaskBeforeCalving(:) = cellMaskPrev(:)
          else
-            cellMaskBeforeCalving => cellMaskTemporaryField % array
+            cellMaskBeforeCalving(:) = cellMaskTemporaryField % array(:)
          endif
 
          calvingThicknessGrounded(:) = 0.0_RKIND
@@ -432,6 +433,8 @@ module li_calving
                endif
             endif ! if calving occurred here
          enddo
+
+         deallocate(cellMaskBeforeCalving)
 
          block => block % next
       end do
