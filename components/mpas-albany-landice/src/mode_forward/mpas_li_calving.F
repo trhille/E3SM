@@ -3175,26 +3175,29 @@ module li_calving
       ! 4. Clean up after applying ablation velocity from parameterization
       ! a. Zap any stranded ice.  This only needs to be considered for floating ice.
       ablationSubtotal3 = 0.0_RKIND
-      do iCell = 1, nCells
-         if (li_mask_is_floating_ice(cellMask(iCell)) .and. (.not. li_mask_is_dynamic_ice(cellMask(iCell)))) then
-            thkCount = 0
-            do iNeighbor = 1, nEdgesOnCell(iCell)
-               jCell = cellsOnCell(iNeighbor, iCell)
-               if (li_mask_is_dynamic_ice(cellMask(jCell))) then
-                  thkCount = thkCount + 1
+      if ( applyToFloating ) then
+         ! Only do this cleanup step if ablation is being applied to floating ice
+         do iCell = 1, nCells
+            if (li_mask_is_floating_ice(cellMask(iCell)) .and. (.not. li_mask_is_dynamic_ice(cellMask(iCell)))) then
+               thkCount = 0
+               do iNeighbor = 1, nEdgesOnCell(iCell)
+                  jCell = cellsOnCell(iNeighbor, iCell)
+                  if (li_mask_is_dynamic_ice(cellMask(jCell))) then
+                     thkCount = thkCount + 1
+                  endif
+               enddo
+               if (thkCount == 0) then
+                  ablationThickness(iCell) = thickness(iCell)
+                  if (iCell <= nCellsSolve) ablationSubtotal3 = ablationSubtotal3 + ablationThickness(iCell)
                endif
-            enddo
-            if (thkCount == 0) then
-               ablationThickness(iCell) = thickness(iCell)
-               if (iCell <= nCellsSolve) ablationSubtotal3 = ablationSubtotal3 + ablationThickness(iCell)
             endif
-         endif
-         if (ieee_is_nan(calvingThickness(iCell))) then
-            call mpas_log_write("NaN detected in calvingThickness at cell $i", MPAS_LOG_ERR, intArgs=(/iCell/))
-            err_tmp = 1
-            err = ior(err, err_tmp)
-         endif
-      enddo
+            if (ieee_is_nan(calvingThickness(iCell))) then
+               call mpas_log_write("NaN detected in calvingThickness at cell $i", MPAS_LOG_ERR, intArgs=(/iCell/))
+               err_tmp = 1
+               err = ior(err, err_tmp)
+            endif
+         enddo
+      endif
 
       ! b. Clean up to account for roundoff level errors that can occur
       do iCell = 1, nCells
