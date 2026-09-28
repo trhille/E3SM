@@ -456,7 +456,8 @@ contains
             ! regional sums of floating ice volume over cells with ice (m^3)
             blockSumRegionFloatingIceVolume(iRegion) = blockSumRegionFloatingIceVolume(iRegion) + &
             ( real(regionCellMasks(iRegion,iCell),RKIND) * areaCell(iCell) &
-              * thickness(iCell) * real(li_mask_is_floating_ice_int(cellMask(iCell)),RKIND) )
+                     * thickness(iCell) * (real(li_mask_is_floating_ice_int(cellMask(iCell)),RKIND) - &
+                     real(li_mask_is_grounded_floating_fringe_int(cellMask(iCell)),RKIND)) )
 
             ! regional sum of sfc mass balance (kg yr^{-1})
             blockSumRegionSfcMassBal(iRegion) = blockSumRegionSfcMassBal(iRegion) + ( real(regionCellMasks(iRegion,iCell),RKIND) &

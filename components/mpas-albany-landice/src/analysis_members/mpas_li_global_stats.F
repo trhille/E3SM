@@ -393,8 +393,10 @@ contains
             blockSumFloatingIceArea = blockSumFloatingIceArea + real(li_mask_is_floating_ice_int(cellMask(iCell)),RKIND) &
                 * areaCell(iCell)
 
-            blockSumFloatingIceVolume = blockSumFloatingIceVolume + real(li_mask_is_floating_ice_int(cellMask(iCell)),RKIND) &
-                * areaCell(iCell) * thickness(iCell)
+            blockSumFloatingIceVolume = blockSumFloatingIceVolume + &
+               (real(li_mask_is_floating_ice_int(cellMask(iCell)),RKIND) - &
+                real(li_mask_is_grounded_floating_fringe_int(cellMask(iCell)),RKIND)) &
+               * areaCell(iCell) * thickness(iCell)
 
             ! max, min thickness values (m)
             if( thickness(iCell) > blockThickMax)then
