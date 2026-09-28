@@ -512,7 +512,8 @@ contains
           if (li_mask_is_floating_ice(cellMask(i)) .and. .not. li_mask_is_dynamic_ice(cellMask(i))) then
               do j=1,nEdgesOnCell(i)
                  iCellNeighbor = cellsOnCell(j,i)
-                 if (li_mask_is_grounded_ice(cellMask(iCellNeighbor))) then
+                 if (li_mask_is_grounded_ice(cellMask(iCellNeighbor)) .and. &
+                     li_mask_is_dynamic_ice(cellMask(iCellNeighbor))) then
                     cellMask(i) = ior(cellMask(i), li_mask_ValueGroundedFloatingFringe)
                     exit  ! if we found a grounded neighbor, no need to look at additional neighbors
                  endif
