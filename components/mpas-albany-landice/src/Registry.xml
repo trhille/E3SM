@@ -1488,6 +1488,9 @@ is the value of that variable from the *previous* time level!
                 <var name="calvingThickness" type="real" dimensions="nCells Time" units="m" time_levs="1"
                         description="thickness of ice that calves on a given timestep (less than or equal to ice thickness)"
                 />
+				<var name="calvingThicknessGrounded" type="real" dimensions="nCells Time" units="m" time_levs="1"
+                        description="calving thickness originating from grounded ice.  This is approximately equal to calving from grounded marine margins."
+                />
                 <var name="calvingThicknessFromThreshold" type="real" dimensions="nCells Time" units="m" time_levs="1"
                         description="thickness of ice that calves on a given timestep for only processes that generate calving based on a threshold.  This includes mask calving, damage calving, iceberg and small island detection, and velocity speed limit."
                 />
