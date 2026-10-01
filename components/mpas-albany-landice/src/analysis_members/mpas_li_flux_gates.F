@@ -144,9 +144,9 @@ contains
       iceFluxThroughGates(:) = 0.0_RKIND
 
       do iGate = 1, nFluxGates
-         localIceFluxThroughGates(iGate) = sum( sum(layerNormalVelocity(:,1:nEdgesSolve) * layerThicknessEdge(:,1:nEdgesSolve), 1) * &
-                                                dvEdge(1:nEdgesSolve) * rhoi * scyr * fluxGateEdgeMasks(iGate, 1:nEdgesSolve) * &
-                                                fluxGateEdgeMasksSigns(iGate, 1:nEdgesSolve) )
+         localIceFluxThroughGates(iGate) = abs(sum( sum(layerNormalVelocity(:,1:nEdgesSolve) * layerThicknessEdge(:,1:nEdgesSolve), 1) * &
+                                                    dvEdge(1:nEdgesSolve) * rhoi * scyr * fluxGateEdgeMasks(iGate, 1:nEdgesSolve) * &
+                                                    fluxGateEdgeMasksSigns(iGate, 1:nEdgesSolve) ))
       enddo
 
       call mpas_dmpar_sum_real_array(dminfo, nFluxGates, localIceFluxThroughGates, iceFluxThroughGates)
