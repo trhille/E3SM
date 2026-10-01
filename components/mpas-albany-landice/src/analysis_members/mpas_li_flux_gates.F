@@ -121,6 +121,8 @@ contains
       real (kind=RKIND), dimension(nFluxGates) :: localIceFluxThroughGates
       integer :: iGate
 
+      err = 0
+
       dminfo = domain % dminfo
       call mpas_pool_get_config(liConfigs, 'config_ice_density', rhoi)
       call mpas_pool_get_subpool(domain % blocklist % structs, 'mesh', meshPool)
