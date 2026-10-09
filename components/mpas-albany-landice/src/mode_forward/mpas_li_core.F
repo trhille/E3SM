@@ -414,12 +414,12 @@ module li_core
       call li_bedtopo_init(domain, err_tmp)
       err = ior(err, err_tmp)
 
-      if (err>0) call mpas_log_write("Error detected before analysis driver init (check prior init steps)", MPAS_LOG_CRIT)
+      if (err>0) call mpas_log_write("Error detected in li_core_init (after li_bedtopo_init, before li_analysis_init)", MPAS_LOG_ERR)
 
       ! initialize analysis driver
       call li_analysis_init(domain, err_tmp)
       err = ior(err, err_tmp)
-      if (err>0) call mpas_log_write("Error in li_analysis_init or prior init steps", MPAS_LOG_CRIT)
+      if (err>0) call mpas_log_write("Error detected after li_analysis_init", MPAS_LOG_ERR)
 
       ! initialize time averaging of fields sent to coupler
       call li_time_average_coupled_init(meshPool,timeAveragingPool)      
