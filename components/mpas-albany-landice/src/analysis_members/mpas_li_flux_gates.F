@@ -147,12 +147,15 @@ contains
          iGate = fluxGateEdgeID(iEdge)
          if (iGate >= 1 .and. iGate <= nFluxGates) then
             localIceFluxThroughGates(iGate) = localIceFluxThroughGates(iGate) + &
-               abs(sum(layerNormalVelocity(:,iEdge) * layerThicknessEdge(:,iEdge)) * &
-                   dvEdge(iEdge) * rhoi * scyr * real(fluxGateEdgeSign(iEdge), RKIND))
+               sum(layerNormalVelocity(:,iEdge) * layerThicknessEdge(:,iEdge)) * &
+                   dvEdge(iEdge) * rhoi * scyr * real(fluxGateEdgeSign(iEdge), RKIND)
          endif
       enddo
 
       call mpas_dmpar_sum_real_array(dminfo, nFluxGates, localIceFluxThroughGates, iceFluxThroughGates)
+
+      ! Gate orientation is arbitrary, so report the magnitude of the net flux
+      iceFluxThroughGates(:) = abs(iceFluxThroughGates(:))
 
    end subroutine li_compute_flux_across_gates
 
