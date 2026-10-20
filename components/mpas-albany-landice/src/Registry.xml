@@ -1038,6 +1038,9 @@
                         <var name="floatingBasalMassBal"/>
                         <var name="regionCellMasks"/>
                         <var name="regionEdgeMasks"/>
+                        <var name="fluxGateEdgeID" packages="fluxGatesAMPKG"/>
+                        <var name="fluxGateEdgeSign" packages="fluxGatesAMPKG"/>
+                        <var name="fluxGateNames" packages="fluxGatesAMPKG"/>
                         <!-- If restart file sizes become too large, eigencalvingParameter,
                              groundedVonMisesThresholdStress, and floatingVonMisesThresholdStress
                              could be moved to packages. -->
