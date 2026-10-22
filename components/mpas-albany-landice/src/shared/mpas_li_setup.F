@@ -54,7 +54,8 @@ module li_setup
              li_cells_to_vertices_1dfield_using_kiteAreas, &
              li_calculate_layerThickness, &
              li_compute_gradient_2d, &
-             li_init_barycentric_weights_vertex
+             li_init_barycentric_weights_vertex, &
+             li_setup_uses_external_dycore
 
 
    !--------------------------------------------------------------------
@@ -919,6 +920,48 @@ contains
       endif
 
   end subroutine li_init_barycentric_weights_vertex
+
+
+!***********************************************************************
+!
+!  function li_setup_uses_external_dycore
+!
+!> \brief   Determine whether a run uses the external (Albany) FEM dycore
+!> \author  Trevor Hillebrand
+!> \date    October 2026
+!> \details
+!>  Returns .true. for 'L1L2', 'FO' and 'Stokes', which always use the
+!>  external dycore.  For 'gnn', the external dycore is only reachable if
+!>  it performs the initial solve (config_gnn_solver_init = 'FO') or if the
+!>  random-forest error check (config_gnn_rf_check) may fall back to it on
+!>  any solve -- mirroring gnnExternalAvailable in mpas_li_velocity.F.
+!>  Callers that branch on config_velocity_solver to decide whether to set
+!>  up Albany-specific mask bits or interpolation weights should use this
+!>  function instead of checking config_velocity_solver directly, so that
+!>  those paths stay correct for 'gnn' runs that use the external dycore.
+!
+!-----------------------------------------------------------------------
+
+   function li_setup_uses_external_dycore(config_velocity_solver) result(usesExternal)
+
+      character (len=*), intent(in) :: config_velocity_solver
+
+      logical :: usesExternal
+
+      character (len=StrKIND), pointer :: config_gnn_solver_init
+      logical, pointer :: config_gnn_rf_check
+
+      usesExternal = (trim(config_velocity_solver) == 'L1L2') .or. &
+                     (trim(config_velocity_solver) == 'FO') .or. &
+                     (trim(config_velocity_solver) == 'Stokes')
+
+      if (trim(config_velocity_solver) == 'gnn') then
+         call mpas_pool_get_config(liConfigs, 'config_gnn_solver_init', config_gnn_solver_init)
+         call mpas_pool_get_config(liConfigs, 'config_gnn_rf_check', config_gnn_rf_check)
+         usesExternal = (trim(config_gnn_solver_init) == 'FO') .or. config_gnn_rf_check
+      endif
+
+   end function li_setup_uses_external_dycore
 
 
 !***********************************************************************

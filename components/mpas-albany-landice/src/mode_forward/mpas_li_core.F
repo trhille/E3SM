@@ -1096,9 +1096,7 @@ module li_core
       err = ior(err, err_tmp)
 
       ! Higher-order velo solvers needs vertex-to-cell interp routine initialized
-      if ( (trim(config_velocity_solver) == 'L1L2') .or.    &
-           (trim(config_velocity_solver) == 'FO') .or.      &
-           (trim(config_velocity_solver) == 'Stokes') ) then
+      if ( li_setup_uses_external_dycore(config_velocity_solver) ) then
          call li_setup_wachspress_vertex_to_cell_weights(meshPool)
       endif
 

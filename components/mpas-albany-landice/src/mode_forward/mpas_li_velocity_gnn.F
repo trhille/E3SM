@@ -40,6 +40,9 @@ module li_velocity_gnn
    use li_constants
    use ieee_arithmetic
    use ieee_exceptions
+#ifdef USE_FTORCH
+   use iso_c_binding, only: c_int, c_int64_t, c_double, c_char, c_null_char
+#endif
 
    implicit none
    private
@@ -73,6 +76,67 @@ module li_velocity_gnn
 
    logical, save :: gnn_initialized = .false.
 
+   !--------------------------------------------------------------------
+   ! Random-forest error check (optional; see config_gnn_rf_check).  Flags
+   ! GNN solves that are likely to have high velocity error so that
+   ! li_velocity (mpas_li_velocity.F) can fall back to the external ('FO')
+   ! dycore for that solve instead of trusting the GNN prediction.
+   !--------------------------------------------------------------------
+   integer, parameter :: RF_SLOT_X = 0  ! forest slot for x-velocity error check
+   integer, parameter :: RF_SLOT_Y = 1  ! forest slot for y-velocity error check
+   ! Matching the slot args' bind(C) kind avoids relying on automatic
+   ! integer-kind conversion for VALUE dummy arguments.
+#ifdef USE_FTORCH
+   integer(c_int), parameter :: RF_SLOT_X_C = int(RF_SLOT_X, c_int)
+   integer(c_int), parameter :: RF_SLOT_Y_C = int(RF_SLOT_Y, c_int)
+#endif
+
+   logical, save :: rfCheckEnabled = .false.
+   integer, save :: rfThreshold = 0          ! config_gnn_rf_threshold
+   real (kind=RKIND), save :: rfSampleFraction = 0.0_RKIND  ! config_gnn_rf_sample_fraction
+   integer, save :: rfBaseSeed = 42          ! config_gnn_rf_seed
+   integer, save :: gnnSolveCount = 0        ! number of GNN solves attempted (for per-solve seed offset and summary logging)
+   integer, save :: gnnFallbackCount = 0     ! number of those solves that fell back to the external dycore
+
+#ifdef USE_FTORCH
+   !--------------------------------------------------------------------
+   ! C bindings to the random-forest predictor (mpas_li_rf_predict.cpp)
+   !--------------------------------------------------------------------
+   interface
+
+      function li_rf_load(slot, path) result(ierr) bind(C, name="li_rf_load")
+         import :: c_int, c_char
+         integer(c_int), value :: slot
+         character(kind=c_char), dimension(*), intent(in) :: path
+         integer(c_int) :: ierr
+      end function li_rf_load
+
+      function li_rf_count_ones(slot, x, nRows, nFeat, nSample, seed, nOnes, nTies) result(ierr) &
+            bind(C, name="li_rf_count_ones")
+         import :: c_int, c_int64_t, c_double
+         integer(c_int), value :: slot
+         real(c_double), dimension(*), intent(in) :: x
+         integer(c_int), value :: nRows, nFeat, nSample
+         integer(c_int64_t), value :: seed
+         integer(c_int), intent(out) :: nOnes
+         integer(c_int), intent(out) :: nTies
+         integer(c_int) :: ierr
+      end function li_rf_count_ones
+
+      subroutine li_rf_free(slot) bind(C, name="li_rf_free")
+         import :: c_int
+         integer(c_int), value :: slot
+      end subroutine li_rf_free
+
+      subroutine li_rf_last_error(buf, buflen) bind(C, name="li_rf_last_error")
+         import :: c_char, c_int
+         character(kind=c_char), dimension(*), intent(out) :: buf
+         integer(c_int), value :: buflen
+      end subroutine li_rf_last_error
+
+   end interface
+#endif
+
 contains
 
 !***********************************************************************
@@ -96,6 +160,12 @@ contains
       ! local variables
       character (len=StrKIND), pointer :: config_gnn_model_path
       character (len=StrKIND), pointer :: config_gnn_device_type
+      logical, pointer :: config_gnn_rf_check
+      character (len=StrKIND), pointer :: config_gnn_rf_weights_x
+      character (len=StrKIND), pointer :: config_gnn_rf_weights_y
+      real (kind=RKIND), pointer :: config_gnn_rf_sample_fraction
+      integer, pointer :: config_gnn_rf_threshold
+      integer, pointer :: config_gnn_rf_seed
       type (block_type), pointer :: block
       type (mpas_pool_type), pointer :: meshPool
       integer, pointer :: nCellsSolve, nEdgesSolve
@@ -108,6 +178,10 @@ contains
       integer, allocatable :: edgecounts(:), edgedispls(:)
       integer, allocatable :: all_edges_flat(:)
       integer :: nEdgesAll, i
+#ifdef USE_FTORCH
+      integer(c_int) :: rfLoadErr
+      integer :: rfInitErr, mpiErr
+#endif
 
       err = 0
 
@@ -213,6 +287,62 @@ contains
          call mpas_log_write('GNN velocity model loaded from: ' // trim(config_gnn_model_path))
       endif
 
+      ! --- Optionally load the random-forest error-check forests on rank 0 ---
+      call mpas_pool_get_config(liConfigs, 'config_gnn_rf_check', config_gnn_rf_check)
+      rfCheckEnabled = config_gnn_rf_check
+      if (rfCheckEnabled) then
+         call mpas_pool_get_config(liConfigs, 'config_gnn_rf_weights_x', config_gnn_rf_weights_x)
+         call mpas_pool_get_config(liConfigs, 'config_gnn_rf_weights_y', config_gnn_rf_weights_y)
+         call mpas_pool_get_config(liConfigs, 'config_gnn_rf_sample_fraction', config_gnn_rf_sample_fraction)
+         call mpas_pool_get_config(liConfigs, 'config_gnn_rf_threshold', config_gnn_rf_threshold)
+         call mpas_pool_get_config(liConfigs, 'config_gnn_rf_seed', config_gnn_rf_seed)
+         rfSampleFraction = config_gnn_rf_sample_fraction
+         rfThreshold = config_gnn_rf_threshold
+         rfBaseSeed = config_gnn_rf_seed
+
+         rfInitErr = 0
+         if (myRank == 0) then
+            rfLoadErr = li_rf_load(RF_SLOT_X_C, trim(config_gnn_rf_weights_x) // c_null_char)
+            if (rfLoadErr /= 0) then
+               call log_rf_error('Failed to load GNN RF x-velocity error-check forest from ' // &
+                  trim(config_gnn_rf_weights_x) // ': ')
+               rfInitErr = 1
+            else
+               call mpas_log_write('GNN RF x-velocity error-check forest loaded from: ' // &
+                  trim(config_gnn_rf_weights_x))
+            endif
+
+            rfLoadErr = li_rf_load(RF_SLOT_Y_C, trim(config_gnn_rf_weights_y) // c_null_char)
+            if (rfLoadErr /= 0) then
+               call log_rf_error('Failed to load GNN RF y-velocity error-check forest from ' // &
+                  trim(config_gnn_rf_weights_y) // ': ')
+               rfInitErr = 1
+            else
+               call mpas_log_write('GNN RF y-velocity error-check forest loaded from: ' // &
+                  trim(config_gnn_rf_weights_y))
+            endif
+         endif
+
+         ! Broadcast load success/failure so all ranks abort together rather
+         ! than only rank 0 detecting the error.
+         call MPI_Bcast(rfInitErr, 1, MPI_INTEGER, 0, domain % dminfo % comm, mpiErr)
+         if (rfInitErr /= 0) then
+            call mpas_log_write('GNN random-forest error check (config_gnn_rf_check) failed to initialize.', MPAS_LOG_CRIT)
+            err = 1
+            return
+         endif
+
+#ifndef USE_EXTERNAL_FIRSTORDER
+         call mpas_log_write('config_gnn_rf_check = .true. requires compiling with the external FO dycore ' // &
+            '(USE_EXTERNAL_FIRSTORDER), since a flagged solve falls back to it.', MPAS_LOG_CRIT)
+         err = 1
+         return
+#endif
+
+         call mpas_log_write('GNN random-forest error check enabled.  sample_fraction=$r threshold=$i seed=$i', &
+              realArgs=(/rfSampleFraction/), intArgs=(/rfThreshold, rfBaseSeed/))
+      endif
+
       gnn_initialized = .true.
       call mpas_log_write('GNN velocity solver initialized.')
       call mpas_log_write('  Global cells: $i, Undirected edges: $i', &
@@ -241,13 +371,21 @@ contains
 !> \details
 !>  Gathers input features to rank 0, runs GNN inference, scatters
 !>  predicted velocities back, and fills uReconstructX/Y and
-!>  normalVelocity fields.
+!>  normalVelocity fields.  If config_gnn_rf_check is enabled, a
+!>  random-forest error check is run on the GNN input features (on a random
+!>  subsample of ice cells) before the GNN inference.  If either forest
+!>  flags more sampled cells than config_gnn_rf_threshold, GNN inference is
+!>  skipped and useFallback is set so the caller (li_velocity_solve in
+!>  mpas_li_velocity.F) falls back to the external dycore for this solve.
 !
 !-----------------------------------------------------------------------
 
-   subroutine li_velocity_gnn_solve(domain, err)
+   subroutine li_velocity_gnn_solve(domain, useFallback, err)
 
       type (domain_type), intent(inout) :: domain
+      logical, intent(out) :: useFallback !< Output: .true. if the random-forest
+      !< error check flagged this solve; the caller should fall back to the
+      !< external dycore rather than using GNN-predicted velocities.
       integer, intent(out) :: err
 
       ! local variables
@@ -298,7 +436,23 @@ contains
       integer, pointer :: nVertLevels
       logical :: fpe_invalid, fpe_divzero, fpe_overflow  ! saved FPE trap state
 
+      ! Random-forest error check (rank 0 only; see li_velocity_gnn_init).
+      ! li_rf_count_ones() draws its own random subsample internally (given
+      ! nSample and a seed), so the full ice-cell feature matrix is passed
+      ! through, just promoted from single to double precision; a Fortran
+      ! (nIceCells, nFeatures) array is already stored column-major, which
+      ! is the layout li_rf_count_ones expects.
+#ifdef USE_FTORCH
+      real (c_double), allocatable :: ice_features_dp(:,:)  ! (nIceCells, nFeatures)
+      integer(c_int) :: rfOnesX, rfOnesY, rfTiesX, rfTiesY
+      integer(c_int) :: rfErrX, rfErrY
+      integer(c_int64_t) :: rfSeed
+#endif
+      integer :: nSample
+      integer :: fallbackInt, mpiErr2
+
       err = 0
+      useFallback = .false.
 
 #ifdef USE_FTORCH
       if (.not. gnn_initialized) then
@@ -306,6 +460,12 @@ contains
          err = 1
          return
       endif
+
+      gnnSolveCount = gnnSolveCount + 1
+
+      ! Computed on rank 0 only below, then broadcast; initialize here so
+      ! every rank has a defined value going into that broadcast.
+      fallbackInt = 0
 
       myRank = domain % dminfo % my_proc_id
 
@@ -478,6 +638,46 @@ contains
          call mpas_log_write('nIceCells=$i, nIceEdgesDirected will be computed next', &
               intArgs=(/nIceCells/))
 
+         ! --- Random-forest error check (optional) ---
+         ! Flags this solve as likely high-error before spending time on GNN
+         ! inference. Uses the full ice-cell feature matrix (promoted to
+         ! double precision); li_rf_count_ones draws its own deterministic
+         ! random subsample internally from a per-solve seed, operating in
+         ! global-cell-ID order so the decision is independent of the
+         ! domain decomposition (number of MPI ranks/blocks).
+         fallbackInt = 0
+         if (rfCheckEnabled) then
+            nSample = max(1, nint(rfSampleFraction * real(nIceCells, RKIND)))
+            rfSeed = int(rfBaseSeed, c_int64_t) + int(gnnSolveCount, c_int64_t)
+
+            allocate(ice_features_dp(nIceCells, nFeatures))
+            ice_features_dp = real(ice_features, c_double)
+
+            rfErrX = li_rf_count_ones(RF_SLOT_X_C, ice_features_dp, nIceCells, nFeatures, nSample, &
+                                       rfSeed, rfOnesX, rfTiesX)
+            rfErrY = li_rf_count_ones(RF_SLOT_Y_C, ice_features_dp, nIceCells, nFeatures, nSample, &
+                                       rfSeed, rfOnesY, rfTiesY)
+            deallocate(ice_features_dp)
+
+            if (rfErrX /= 0 .or. rfErrY /= 0) then
+               call log_rf_error('GNN RF error check failed: ')
+               err = 1
+            else
+               call mpas_log_write('GNN RF error check: nSample=$i x: ones=$i ties=$i, y: ones=$i ties=$i, threshold=$i', &
+                    intArgs=(/nSample, int(rfOnesX), int(rfTiesX), int(rfOnesY), int(rfTiesY), rfThreshold/))
+               if (int(rfOnesX) > rfThreshold .or. int(rfOnesY) > rfThreshold) then
+                  fallbackInt = 1
+               endif
+            endif
+         endif
+
+         ! If the random-forest error check flagged this solve, skip GNN
+         ! inference entirely; the caller (li_velocity_solve in
+         ! mpas_li_velocity.F) will fall back to the external dycore
+         ! instead of using global_velocity (left at its initialized value
+         ! of zero below).
+         if (fallbackInt == 0) then
+
          ! Build ice-only bidirectional edge_index
          ! First count edges where both endpoints have ice
          nIceEdgesUndirected = 0
@@ -561,7 +761,29 @@ contains
          call dump_gnn_debug(ice_features, ice_edge_index, ice_velocity, &
                              nIceCells, nFeatures, nIceEdgesDirected)
 
-         deallocate(ice_map, ice_features, ice_velocity, ice_edge_index, ice_batch)
+         deallocate(ice_edge_index, ice_velocity, ice_batch)
+
+         else
+            call mpas_log_write('GNN random-forest error check flagged this solve; ' // &
+               'falling back to the external dycore instead of using the GNN prediction.', MPAS_LOG_WARN)
+         endif
+
+         deallocate(ice_map, ice_features)
+      endif
+
+      ! Broadcast the fallback decision (computed on rank 0 only) to all ranks
+      call MPI_Bcast(fallbackInt, 1, MPI_INTEGER, 0, domain % dminfo % comm, mpiErr2)
+      useFallback = (fallbackInt == 1)
+      if (useFallback) gnnFallbackCount = gnnFallbackCount + 1
+
+      ! If this solve was flagged, skip the scatter/fill/halo-exchange below:
+      ! the caller (li_velocity_solve in mpas_li_velocity.F) will overwrite
+      ! uReconstructX/Y and normalVelocity with an external-dycore solve
+      ! instead of using these (never-computed) GNN velocities.
+      if (useFallback) then
+         deallocate(local_features, global_features, gathered_features)
+         deallocate(global_velocity, gathered_velocity, global_cellIDs)
+         return
       endif
 
       ! Reorder velocity from global cell ID order back to gathered order for scattering
@@ -654,6 +876,12 @@ contains
          if (allocated(global_edge_pairs)) deallocate(global_edge_pairs)
          if (allocated(recvcounts)) deallocate(recvcounts)
          if (allocated(displs)) deallocate(displs)
+         if (rfCheckEnabled) then
+            call li_rf_free(RF_SLOT_X_C)
+            call li_rf_free(RF_SLOT_Y_C)
+            call mpas_log_write('GNN random-forest error check: $i of $i solves fell back to the external dycore.', &
+                 intArgs=(/gnnFallbackCount, gnnSolveCount/))
+         endif
          gnn_initialized = .false.
       endif
 #endif
@@ -664,6 +892,38 @@ contains
 !***********************************************************************
 ! Private helper routines
 !***********************************************************************
+
+#ifdef USE_FTORCH
+!-----------------------------------------------------------------------
+!
+!  routine log_rf_error
+!
+!> \brief   Log a message plus the last error from the RF predictor library
+!> \details Fetches the message set by mpas_li_rf_predict.cpp's most recent
+!>  failure and writes prefix // message as an MPAS_LOG_ERR.
+!
+!-----------------------------------------------------------------------
+
+   subroutine log_rf_error(prefix)
+
+      character (len=*), intent(in) :: prefix
+
+      character(kind=c_char), dimension(256) :: errBuf
+      character (len=256) :: errMsg
+      integer :: i
+
+      call li_rf_last_error(errBuf, size(errBuf))
+      errMsg = ' '
+      do i = 1, size(errBuf)
+         if (errBuf(i) == c_null_char) exit
+         errMsg(i:i) = errBuf(i)
+      end do
+
+      call mpas_log_write(prefix // trim(errMsg), MPAS_LOG_ERR)
+
+   end subroutine log_rf_error
+#endif
+
 
 !-----------------------------------------------------------------------
 !

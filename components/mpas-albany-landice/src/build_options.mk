@@ -60,7 +60,17 @@ $(error LIBTORCH_ROOT is not set.  Please set LIBTORCH_ROOT to the LibTorch inst
 endif
 	override CPPFLAGS += -DUSE_FTORCH
 	FCINCLUDES += -I$(FTORCH_ROOT)/include/ftorch
-	override LDFLAGS += -Wl,-rpath,$(FTORCH_ROOT)/lib64 -Wl,-rpath,$(LIBTORCH_ROOT)/lib
+	# The random-forest error check (mpas_li_rf_predict.cpp) uses C++17.
+	# NOTE: CXXFLAGS and LDFLAGS are plain-assigned from CXXFLAGS_OPT/_DEBUG
+	# and LDFLAGS_OPT/_DEBUG later in mpas-framework/Makefile (after this
+	# file is included), so "override CXXFLAGS/LDFLAGS +=" here would be
+	# clobbered by that later assignment (override beats a later plain
+	# assignment of the same variable). Append to the _OPT/_DEBUG sources
+	# instead so the flag survives into whichever one is selected.
+	override CXXFLAGS_OPT += -std=c++17
+	override CXXFLAGS_DEBUG += -std=c++17
+	override LDFLAGS_OPT += -Wl,-rpath,$(FTORCH_ROOT)/lib64 -Wl,-rpath,$(LIBTORCH_ROOT)/lib
+	override LDFLAGS_DEBUG += -Wl,-rpath,$(FTORCH_ROOT)/lib64 -Wl,-rpath,$(LIBTORCH_ROOT)/lib
 ifeq "$(FTORCH_CUDA)" "true"
 ifndef CUDA_HOME
 $(error CUDA_HOME is not set.  Please set CUDA_HOME to the CUDA toolkit directory when FTORCH_CUDA=true)

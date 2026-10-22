@@ -80,6 +80,30 @@
 		            description="Velocity solver used for the initial velocity solve of a 'gnn' run when the run is not a restart. This provides a physically consistent starting velocity field before the GNN emulator is used for all subsequent solves. 'FO' uses the external Blatter-Pattyn dycore (requires compiling with it). 'sia' uses the native shallow-ice-approximation solver. 'gnn' uses the GNN emulator from the first solve (no separate initial solve). 'none' skips the initial velocity solve entirely. On a restart this option is ignored and the velocity is taken from the restart file."
 		            possible_values="'FO', 'sia', 'gnn', 'none'"
 		/>
+		<nml_option name="config_gnn_rf_check" type="logical" default_value=".false." units="unitless"
+		            description="If true, each GNN velocity solve is checked with random-forest classifiers trained to flag likely high-error GNN predictions. If either forest's predicted-error count on a random subsample of ice cells exceeds config_gnn_rf_threshold, that solve falls back to the external ('FO') dycore instead of using the GNN prediction. Requires compiling with an external dycore ('FO') in addition to FTorch."
+		            possible_values="'true', 'false'"
+		/>
+		<nml_option name="config_gnn_rf_weights_x" type="character" default_value="rf_x.bin" units="unitless"
+		            description="Path to the binary random-forest weights file used to flag likely high-error GNN x-velocity predictions. Only used if config_gnn_rf_check = .true.. Expects a feature-names file at config_gnn_rf_weights_x // '.features.txt' and, if applicable, factor levels at config_gnn_rf_weights_x // '.factor_levels.tsv'."
+		            possible_values="Any valid file path."
+		/>
+		<nml_option name="config_gnn_rf_weights_y" type="character" default_value="rf_y.bin" units="unitless"
+		            description="Path to the binary random-forest weights file used to flag likely high-error GNN y-velocity predictions. Only used if config_gnn_rf_check = .true.. Expects a feature-names file at config_gnn_rf_weights_y // '.features.txt' and, if applicable, factor levels at config_gnn_rf_weights_y // '.factor_levels.tsv'."
+		            possible_values="Any valid file path."
+		/>
+		<nml_option name="config_gnn_rf_sample_fraction" type="real" default_value="0.01" units="unitless"
+		            description="Fraction of global ice cells randomly subsampled (without replacement) each GNN solve for evaluation by the random-forest error check. Only used if config_gnn_rf_check = .true.."
+		            possible_values="Any real number between 0 and 1."
+		/>
+		<nml_option name="config_gnn_rf_threshold" type="integer" default_value="425" units="unitless"
+		            description="Number of sampled cells that must be flagged as likely high-error by a random forest (x or y) to trigger fallback to the external dycore for that solve. Only used if config_gnn_rf_check = .true.."
+		            possible_values="Any non-negative integer."
+		/>
+		<nml_option name="config_gnn_rf_seed" type="integer" default_value="42" units="unitless"
+		            description="Base seed for the deterministic random subsampling and tie-breaking used by the random-forest error check. The solve counter is added to this seed so that each solve draws an independent sample. Only used if config_gnn_rf_check = .true.."
+		            possible_values="Any integer."
+		/>
 		<nml_option name="config_sia_tangent_slope_calculation" type="character" default_value="from_vertex_barycentric" units="unitless"
 		            description="Selection of the method for calculating the tangent component of surface slope at edges needed by the SIA velocity solver.
 'from_vertex_barycentric' interpolates upperSurface values from cell centers to vertices using the barycentric interpolation routine in operators (mpas_cells_to_points_using_baryweights) and then calculates the slope between vertices.  It works for obtuse triangles, but will not work correctly across the edges of periodic meshes.

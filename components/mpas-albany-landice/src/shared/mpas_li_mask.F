@@ -419,9 +419,7 @@ contains
       enddo
 
       ! Identify cells that Albany would consider as active
-      if ( (trim(config_velocity_solver) == 'L1L2') .or. &
-           (trim(config_velocity_solver) == 'FO') .or. &
-           (trim(config_velocity_solver) == 'Stokes') ) then
+      if ( li_setup_uses_external_dycore(config_velocity_solver) ) then
          ! HO external FEM dycore
          ! Identify cells where the ice is above the ice dynamics thickness limit but not with a dirichletVelocity condition set
          where ( li_mask_is_dynamic_ice(cellMask) ) ! .and.    &  ! same as for SIA case
@@ -450,9 +448,7 @@ contains
       enddo
 
       ! Identify first cell outside of active albany extent
-      if ( (trim(config_velocity_solver) == 'L1L2') .or. &
-           (trim(config_velocity_solver) == 'FO') .or. &
-           (trim(config_velocity_solver) == 'Stokes') ) then
+      if ( li_setup_uses_external_dycore(config_velocity_solver) ) then
          do i=1,nCells
             if ( (.not. li_mask_is_albany_active(cellMask(i)))) then  ! check non albany cells only
               isAlbanyMarginNeighbor = .false.
@@ -568,9 +564,7 @@ contains
 
       ! Re-loop over vertices for information only needed by Albany
       ! This is 10x more expensive to conditionally include in the above loop.
-      if ( (trim(config_velocity_solver) == 'L1L2') .or. &
-           (trim(config_velocity_solver) == 'FO') .or. &
-           (trim(config_velocity_solver) == 'Stokes') ) then
+      if ( li_setup_uses_external_dycore(config_velocity_solver) ) then
          do i = 1,nVertices
             aCellOnVertexIsAlbanyActive = .false.
             numCellsOnVertex = 0

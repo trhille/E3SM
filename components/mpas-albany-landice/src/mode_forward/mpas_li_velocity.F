@@ -69,6 +69,22 @@ module li_velocity
    logical, save :: gnnSkipInitialSolve = .false.         ! 'none' (no initial solve)
    logical, save :: gnnInitialSolveDone = .false.
 
+   ! True if the external ('FO') dycore must be kept initialized throughout a
+   ! GNN run, either because it performs the initial solve (config_gnn_solver_init
+   ! = 'FO') or because the random-forest error check (config_gnn_rf_check) may
+   ! need to fall back to it on any solve.
+   logical, save :: gnnExternalAvailable = .false.
+
+   ! True if the random-forest error check flagged the most recent GNN solve,
+   ! in which case the external dycore's FEM grid may be stale (it is only
+   ! regenerated when the external dycore itself is called -- see
+   ! anyDynamicVertexMaskChanged/dirichletMaskChanged below and in
+   ! mpas_li_velocity_external.F).  Accumulates mask changes seen on GNN-only
+   ! solves since the last time the external dycore actually ran, so that the
+   ! external dycore recomputes its FEM grid on its next call if the mask
+   ! changed on any of the intervening GNN-only solves.
+   logical, save :: gnnMaskChangedSinceExternal = .false.
+
 
 !***********************************************************************
 
@@ -118,6 +134,7 @@ contains
       character (len=StrKIND), pointer :: config_velocity_solver
       logical, pointer :: config_do_restart
       character (len=StrKIND), pointer :: config_gnn_solver_init
+      logical, pointer :: config_gnn_rf_check
       integer :: err_tmp
 
       err = 0
@@ -140,6 +157,7 @@ contains
           ! solver here as needed.
           call mpas_pool_get_config(liConfigs, 'config_do_restart', config_do_restart)
           call mpas_pool_get_config(liConfigs, 'config_gnn_solver_init', config_gnn_solver_init)
+          call mpas_pool_get_config(liConfigs, 'config_gnn_rf_check', config_gnn_rf_check)
           if (.not. config_do_restart) then
              select case (trim(config_gnn_solver_init))
              case ('FO')
@@ -159,6 +177,15 @@ contains
                    ' is not a valid config_gnn_solver_init option.', MPAS_LOG_ERR)
                 err = 1
              end select
+          endif
+          ! The random-forest error check (config_gnn_rf_check) can fall back to
+          ! the external dycore on any GNN solve, including on a restart, so the
+          ! external dycore must stay initialized whenever the check is enabled --
+          ! even if config_gnn_solver_init did not already initialize it above.
+          gnnExternalAvailable = gnnUseExternalInitialSolve .or. config_gnn_rf_check
+          if (config_gnn_rf_check .and. .not. gnnUseExternalInitialSolve) then
+             call li_velocity_external_init(domain, err_tmp)
+             err = ior(err, err_tmp)
           endif
       case ('L1L2', 'FO', 'Stokes')
           call li_velocity_external_init(domain, err)
@@ -235,9 +262,11 @@ contains
           call li_velocity_simple_block_init(block, err)
       case ('gnn')
           ! No block-level init needed for the GNN solver itself, but if the
-          ! initial solve will use another solver (config_gnn_solver_init), set
-          ! up that solver's block-level data.
-          if (gnnUseExternalInitialSolve) then
+          ! initial solve will use another solver (config_gnn_solver_init), or
+          ! if the external dycore must stay available for the random-forest
+          ! error check (config_gnn_rf_check), set up that solver's
+          ! block-level data.
+          if (gnnExternalAvailable) then
              call li_velocity_external_block_init(block, err)
           elseif (gnnUseSIAInitialSolve) then
              call li_sia_block_init(block, err)
@@ -353,6 +382,9 @@ contains
       integer :: blockDynamicVertexMaskChanged, procDynamicVertexMaskChanged
       integer :: blockDirichletMaskChanged, procDirichletMaskChanged
       logical :: gnnDoExternalInitSolve, gnnDoSIAInitSolve, gnnDoSkipInitSolve
+      logical, pointer :: config_gnn_rf_check
+      logical :: gnnDoRFCheck, gnnFallback
+      logical :: callCalculateBetaNow
 
       call mpas_timer_start("velocity solve")
 
@@ -367,6 +399,7 @@ contains
       call mpas_pool_get_config(liConfigs, 'config_adaptive_timestep_include_DCFL', config_adaptive_timestep_include_DCFL)
 
       uphillMarginEdgesFixed = 0
+      gnnFallback = .false.
 
       ! Determine whether this call should perform the initial GNN-run velocity
       ! solve with a different solver (config_gnn_solver_init).  This applies
@@ -374,6 +407,27 @@ contains
       gnnDoExternalInitSolve = gnnUseExternalInitialSolve .and. (.not. gnnInitialSolveDone)
       gnnDoSIAInitSolve      = gnnUseSIAInitialSolve      .and. (.not. gnnInitialSolveDone)
       gnnDoSkipInitSolve     = gnnSkipInitialSolve        .and. (.not. gnnInitialSolveDone)
+
+      ! The random-forest error check runs on every ordinary GNN solve (i.e.
+      ! not the initial solve, which already uses a non-GNN solver above).
+      gnnDoRFCheck = .false.
+      if (trim(config_velocity_solver) == 'gnn') then
+         call mpas_pool_get_config(liConfigs, 'config_gnn_rf_check', config_gnn_rf_check)
+         gnnDoRFCheck = config_gnn_rf_check .and. &
+            .not. (gnnDoExternalInitSolve .or. gnnDoSIAInitSolve .or. gnnDoSkipInitSolve)
+      endif
+
+      ! calculate_beta resets betaSolve from the raw input 'beta' field, discarding
+      ! whatever the external dycore last converged to -- it must only run
+      ! immediately before an external-dycore solve actually happens, not merely
+      ! because gnnDoRFCheck means one MIGHT happen this solve.  For an RF-check solve
+      ! that turns out to be served by GNN, calculate_beta is instead called directly
+      ! before each run_gnn_external_fallback_solve() call below, only on the solves
+      ! that truly fall back to the external dycore.
+      callCalculateBetaNow = (trim(config_velocity_solver) == 'L1L2') .or. &
+                             (trim(config_velocity_solver) == 'FO') .or. &
+                             (trim(config_velocity_solver) == 'Stokes') .or. &
+                             gnnDoExternalInitSolve
 
 
       ! In some situations (first time level of a restart), we don't want to actually solve
@@ -441,9 +495,11 @@ contains
       if ( (trim(config_velocity_solver) == 'L1L2') .or. &
            (trim(config_velocity_solver) == 'FO') .or. &
            (trim(config_velocity_solver) == 'Stokes') .or. &
-           gnnDoExternalInitSolve ) then
+           gnnDoExternalInitSolve .or. gnnDoRFCheck ) then
 
-         ! External solvers may not be able to cope with no ice in the domain, so determine if that is the case
+         ! External solvers may not be able to cope with no ice in the domain, so determine if that is the case.
+         ! Also needed for a 'gnn' run with config_gnn_rf_check, since we don't know until after the random-forest
+         ! check (inside the 'gnn' case below) whether this solve will fall back to the external dycore.
          ! Don't bother checking this with SIA because it requires an extra global reduce
          maxThicknessOnProc = 0.0_RKIND  ! initialize to
          procDynamicVertexMaskChanged = 0
@@ -489,8 +545,14 @@ contains
 
             ! Set beta for solver to use
             ! (this could potentially be applied to an SIA solver, so it is calculated in this module)
-            call calculate_beta(block, err_tmp)
-            err = ior(err, err_tmp)
+            ! Only do this here when an external-dycore solve is guaranteed to follow this block
+            ! loop iteration; for a 'gnn' run with config_gnn_rf_check, this loop also runs on solves
+            ! that end up being served by GNN (not yet known at this point), so calculate_beta is
+            ! instead called right before each run_gnn_external_fallback_solve() call below.
+            if (callCalculateBetaNow) then
+               call calculate_beta(block, err_tmp)
+               err = ior(err, err_tmp)
+            endif
 
 
             block => block % next
@@ -509,6 +571,17 @@ contains
          call mpas_pool_get_array(velocityPool, 'dirichletMaskChanged', dirichletMaskChanged)
          call mpas_dmpar_max_int(domain % dminfo, procDirichletMaskChanged, dirichletMaskChanged)
          !print *,'dirichletMaskChanged', dirichletMaskChanged
+
+         ! For a 'gnn' run with config_gnn_rf_check, the external dycore's FEM
+         ! grid is only regenerated when the external dycore actually runs
+         ! (see generate_fem_grid in mpas_li_velocity_external.F), which may
+         ! not happen on every solve.  Remember here if the mask changed on a
+         ! solve where the external dycore did NOT run, so that information
+         ! is not lost by the time the external dycore is eventually called
+         ! again (see the 'gnn' case below and li_velocity_external_solve).
+         if (gnnDoRFCheck .and. (anyDynamicVertexMaskChanged == 1 .or. dirichletMaskChanged == 1)) then
+            gnnMaskChangedSinceExternal = .true.
+         endif
 
       endif
 
@@ -584,21 +657,9 @@ contains
                ! dycore specified by config_gnn_solver_init (e.g. the
                ! Blatter-Pattyn 'FO' solver) to generate a physically consistent
                ! starting velocity field.
-               if (maxThicknessAllProcs < config_dynamic_thickness) then
-                  ! External dycores may not be able to handle case when there is no ice
-                  call mpas_pool_get_array(velocityPool, 'uReconstructX', uReconstructX)
-                  call mpas_pool_get_array(velocityPool, 'uReconstructY', uReconstructY)
-                  call mpas_pool_get_array(velocityPool, 'uReconstructZ', uReconstructZ)
-                  normalVelocity = 0.0_RKIND
-                  uReconstructX = 0.0_RKIND
-                  uReconstructY = 0.0_RKIND
-                  uReconstructZ = 0.0_RKIND
-                  call mpas_log_write("Notice: Skipping velocity solve because there is no dynamic ice in domain.", MPAS_LOG_WARN)
-               else
-                  call mpas_log_write("Performing initial GNN-run velocity solve with external dycore.")
-                  call li_velocity_external_solve(meshPool, geometryPool, thermalPool, hydroPool, scratchPool, &
-                     velocityPool, err_tmp)
-               endif
+               call run_gnn_external_fallback_solve(meshPool, geometryPool, thermalPool, hydroPool, scratchPool, &
+                  velocityPool, maxThicknessAllProcs, config_dynamic_thickness, &
+                  "Performing initial GNN-run velocity solve with external dycore.", err_tmp)
             elseif (gnnDoSIAInitSolve) then
                ! Initial solve of a (non-restart) GNN run using the native SIA solver.
                call mpas_log_write("Performing initial GNN-run velocity solve with SIA solver.")
@@ -608,7 +669,35 @@ contains
                ! and leave the velocity field as initialized.
                call mpas_log_write("Notice: Skipping initial GNN-run velocity solve (config_gnn_solver_init = 'none').")
             else
-               call li_velocity_gnn_solve(domain, err_tmp)
+               ! Ordinary GNN solve.  If config_gnn_rf_check is enabled,
+               ! li_velocity_gnn_solve runs the random-forest error check on
+               ! the GNN input features before (and in place of) GNN
+               ! inference; gnnFallback comes back .true. if either forest
+               ! flagged the solve, in which case GNN inference was skipped
+               ! and we fall back to the external dycore here instead.
+               call li_velocity_gnn_solve(domain, gnnFallback, err_tmp)
+               if (gnnFallback) then
+                  ! This solve was not covered by callCalculateBetaNow above (it
+                  ! wasn't yet known that this solve would fall back), so betaSolve
+                  ! still only holds whatever the external dycore last converged to
+                  ! (or the raw input beta, before the first external-dycore solve).
+                  ! Refresh it now, immediately before the external-dycore call.
+                  call calculate_beta(block, err_tmp)
+                  err = ior(err, err_tmp)
+                  call run_gnn_external_fallback_solve(meshPool, geometryPool, thermalPool, hydroPool, scratchPool, &
+                     velocityPool, maxThicknessAllProcs, config_dynamic_thickness, &
+                     "GNN random-forest error check flagged this solve; using external dycore instead.", err_tmp)
+                  ! The external dycore's FEM grid is regenerated inside
+                  ! li_velocity_external_solve only when the mask changed
+                  ! since the external dycore last ran; make sure any mask
+                  ! changes accumulated across intervening GNN-only solves
+                  ! are visible to that check, then clear the accumulator.
+                  if (gnnMaskChangedSinceExternal) then
+                     anyDynamicVertexMaskChanged = 1
+                     dirichletMaskChanged = 1
+                     gnnMaskChangedSinceExternal = .false.
+                  endif
+               endif
             endif
 
         case default
@@ -853,9 +942,11 @@ contains
           call li_velocity_simple_finalize(err)
       case ('gnn')
           call li_velocity_gnn_finalize(err)
-          ! Finalize the solver that was initialized for the initial solve of
-          ! this GNN run, if any.
-          if (gnnUseExternalInitialSolve) then
+          ! Finalize the external dycore if it was initialized, either for
+          ! the initial solve of this GNN run or to be available as a
+          ! random-forest error-check fallback (gnnExternalAvailable); also
+          ! finalize the SIA solver if it was used for the initial solve.
+          if (gnnExternalAvailable) then
              call li_velocity_external_finalize(err_tmp)
              err = ior(err, err_tmp)
           elseif (gnnUseSIAInitialSolve) then
@@ -883,6 +974,59 @@ contains
 !***********************************************************************
 !  private subroutines
 !***********************************************************************
+
+
+!***********************************************************************
+!
+!  routine run_gnn_external_fallback_solve
+!
+!> \brief  Run the external dycore in place of a GNN velocity solve
+!> \author Trevor Hillebrand
+!> \date   October 2026
+!> \details
+!>  Shared by the two 'gnn' cases that need to fall back to the external
+!>  ('FO') dycore for a single block's solve: the initial solve of a
+!>  non-restart GNN run (config_gnn_solver_init = 'FO'), and any ordinary
+!>  GNN solve flagged by the random-forest error check
+!>  (config_gnn_rf_check).  Zeros velocity instead of calling the external
+!>  dycore if there is no dynamic ice in the domain, matching the
+!>  'L1L2'/'FO'/'Stokes' case in li_velocity_solve above.
+!
+!-----------------------------------------------------------------------
+
+   subroutine run_gnn_external_fallback_solve(meshPool, geometryPool, thermalPool, hydroPool, scratchPool, &
+         velocityPool, maxThicknessAllProcs, config_dynamic_thickness, logMessage, err)
+
+      type (mpas_pool_type), intent(in) :: meshPool, geometryPool, thermalPool, hydroPool, scratchPool
+      type (mpas_pool_type), intent(inout) :: velocityPool
+      real (kind=RKIND), intent(in) :: maxThicknessAllProcs
+      real (kind=RKIND), intent(in) :: config_dynamic_thickness
+      character (len=*), intent(in) :: logMessage !< message to log before calling the external dycore
+      integer, intent(out) :: err
+
+      real (kind=RKIND), dimension(:,:), pointer :: normalVelocity
+      real (kind=RKIND), dimension(:,:), pointer :: uReconstructX, uReconstructY, uReconstructZ
+
+      err = 0
+
+      if (maxThicknessAllProcs < config_dynamic_thickness) then
+         ! External dycores may not be able to handle case when there is no ice
+         call mpas_pool_get_array(velocityPool, 'normalVelocity', normalVelocity)
+         call mpas_pool_get_array(velocityPool, 'uReconstructX', uReconstructX)
+         call mpas_pool_get_array(velocityPool, 'uReconstructY', uReconstructY)
+         call mpas_pool_get_array(velocityPool, 'uReconstructZ', uReconstructZ)
+         normalVelocity = 0.0_RKIND
+         uReconstructX = 0.0_RKIND
+         uReconstructY = 0.0_RKIND
+         uReconstructZ = 0.0_RKIND
+         call mpas_log_write("Notice: Skipping velocity solve because there is no dynamic ice in domain.", MPAS_LOG_WARN)
+      else
+         call mpas_log_write(logMessage)
+         call li_velocity_external_solve(meshPool, geometryPool, thermalPool, hydroPool, scratchPool, &
+            velocityPool, err)
+      endif
+
+   end subroutine run_gnn_external_fallback_solve
 
 
 !***********************************************************************
