@@ -410,6 +410,7 @@ contains
       real (kind=RKIND), dimension(:), pointer :: layerThicknessFractions
       real (kind=RKIND), dimension(:,:), pointer :: normalVelocity
       real (kind=RKIND), dimension(:,:), pointer :: uReconstructX, uReconstructY
+      integer, dimension(:,:), pointer :: dirichletVelocityMask
       real (kind=RKIND), dimension(:,:), pointer :: edgeNormalVectors
       real (kind=RKIND), pointer :: config_sea_level, config_ice_density, config_ocean_density
 
@@ -520,6 +521,7 @@ contains
       call mpas_pool_get_array(velocityPool, 'normalVelocity', normalVelocity)
       call mpas_pool_get_array(velocityPool, 'uReconstructX', uReconstructX)
       call mpas_pool_get_array(velocityPool, 'uReconstructY', uReconstructY)
+      call mpas_pool_get_array(velocityPool, 'dirichletVelocityMask', dirichletVelocityMask, timeLevel = 1)
 
       ! Get configs
       call mpas_pool_get_config(liConfigs, 'config_sea_level', config_sea_level)
@@ -830,11 +832,20 @@ contains
                                        recvcounts, displs, domain % dminfo % comm, myRank)
 
       ! --- Fill uReconstructX/Y with uniform vertical profile ---
-      ! GNN predicts in km/yr; convert to m/s
+      ! GNN predicts in km/yr; convert to m/s. Skip cells/levels where
+      ! dirichletVelocityMask is set: uReconstructX/Y there already hold the
+      ! prescribed Dirichlet boundary velocity (read once from the input or
+      ! restart file and never otherwise modified -- same convention the
+      ! external dycore uses, where these same arrays double as the fixed
+      ! boundary value wherever the mask is 1), and must not be overwritten
+      ! by the GNN's prediction. This matters for regional domains with a
+      ! prescribed lateral boundary velocity.
       do iCell = 1, nLocalOwned
          do k = 1, nVertInterfacesLocal
-            uReconstructX(k, iCell) = local_velocity(iCell, 1) * 1000.0_RKIND / scyr
-            uReconstructY(k, iCell) = local_velocity(iCell, 2) * 1000.0_RKIND / scyr
+            if (dirichletVelocityMask(k, iCell) == 0) then
+               uReconstructX(k, iCell) = local_velocity(iCell, 1) * 1000.0_RKIND / scyr
+               uReconstructY(k, iCell) = local_velocity(iCell, 2) * 1000.0_RKIND / scyr
+            endif
          end do
       end do
 
