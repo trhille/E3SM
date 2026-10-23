@@ -996,6 +996,10 @@
                         <var name="muFriction" packages="higherOrderVelocity"/>
                         <!-- dirichletVelocityMask is only used for HO solvers -->
                         <var name="dirichletVelocityMask" packages="higherOrderVelocity"/>
+                        <!-- gnnRFCheckSolveCount must persist across restarts so the GNN RF error
+                             check's random subsampling is reproducible regardless of where a run
+                             is restarted (see config_gnn_rf_check) -->
+                        <var name="gnnRFCheckSolveCount" packages="higherOrderVelocity"/>
                         <!-- fields only needed by SGH -->
                         <!-- SGH forcing: -->
                         <var name="groundedBasalMassBal" packages="hydro"/>  <!-- This is only needed if config_SGH_basal_melt='thermal', but adding it always-->
@@ -1791,6 +1795,10 @@ is the value of that variable from the *previous* time level!
                 <var name="dirichletMaskChanged"              type="integer"  dimensions="Time"
 					 description="flag needed by external velocity solvers that indicates if the Dirichlet boundary condition mask has changed (treated as a logical)"
 					 packages="higherOrderVelocity"
+                />
+                <var name="gnnRFCheckSolveCount"             type="integer"  dimensions="Time" default_value="0"
+                        description="count of GNN velocity solves on which the random-forest error check (config_gnn_rf_check) has run, used to derive a restart-persistent per-solve seed for its random subsampling. Persists across restarts so sampling is reproducible for a given config_gnn_rf_seed regardless of where a run is restarted."
+                        packages="higherOrderVelocity"
                 />
                 <var name="albanyVelocityError"              type="integer"  dimensions="Time"
                         description="0/1 flag indicating if Albany external velocity solver returned an error.  This typically means it did not converge.  0=converged. 1=unconverged"

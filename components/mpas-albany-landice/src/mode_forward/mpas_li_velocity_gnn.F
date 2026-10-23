@@ -95,7 +95,13 @@ module li_velocity_gnn
    integer, save :: rfThreshold = 0          ! config_gnn_rf_threshold
    real (kind=RKIND), save :: rfSampleFraction = 0.0_RKIND  ! config_gnn_rf_sample_fraction
    integer, save :: rfBaseSeed = 42          ! config_gnn_rf_seed
-   integer, save :: gnnSolveCount = 0        ! number of GNN solves attempted (for per-solve seed offset and summary logging)
+   ! gnnSolveCount and gnnFallbackCount are summary-logging tallies only (reset to 0
+   ! on restart, like any plain module variable) -- NOT the RF check's seed source.
+   ! The seed instead comes from the restart-persistent pool field
+   ! 'gnnRFCheckSolveCount' (see li_velocity_gnn_solve), so that the RF check's
+   ! random subsampling is reproducible across a restart even though this run tally
+   ! is not.
+   integer, save :: gnnSolveCount = 0        ! number of GNN solves attempted this run (since last restart)
    integer, save :: gnnFallbackCount = 0     ! number of those solves that fell back to the external dycore
 
 #ifdef USE_FTORCH
@@ -391,6 +397,7 @@ contains
       ! local variables
       type (block_type), pointer :: block
       type (mpas_pool_type), pointer :: meshPool, geometryPool, thermalPool, velocityPool
+      integer, pointer :: gnnRFCheckSolveCount
       integer, pointer :: nCellsSolve, nEdges, nVertInterfaces
       integer, dimension(:), pointer :: cellMask, indexToCellID
       integer, dimension(:,:), pointer :: cellsOnEdge
@@ -461,8 +468,6 @@ contains
          return
       endif
 
-      gnnSolveCount = gnnSolveCount + 1
-
       ! Computed on rank 0 only below, then broadcast; initialize here so
       ! every rank has a defined value going into that broadcast.
       fallbackInt = 0
@@ -475,6 +480,13 @@ contains
       call mpas_pool_get_subpool(block % structs, 'geometry', geometryPool)
       call mpas_pool_get_subpool(block % structs, 'thermal', thermalPool)
       call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
+
+      ! gnnRFCheckSolveCount is a restart-persistent pool field (unlike a plain
+      ! module variable) so the RF error check's per-solve seed below stays
+      ! consistent with a continuous run regardless of where this run restarted.
+      call mpas_pool_get_array(velocityPool, 'gnnRFCheckSolveCount', gnnRFCheckSolveCount)
+      gnnRFCheckSolveCount = gnnRFCheckSolveCount + 1
+      gnnSolveCount = gnnSolveCount + 1  ! this-run-only tally, for the summary log in li_velocity_gnn_finalize
 
       call mpas_pool_get_dimension(meshPool, 'nCellsSolve', nCellsSolve)
       call mpas_pool_get_dimension(meshPool, 'nEdges', nEdges)
@@ -648,7 +660,7 @@ contains
          fallbackInt = 0
          if (rfCheckEnabled) then
             nSample = max(1, nint(rfSampleFraction * real(nIceCells, RKIND)))
-            rfSeed = int(rfBaseSeed, c_int64_t) + int(gnnSolveCount, c_int64_t)
+            rfSeed = int(rfBaseSeed, c_int64_t) + int(gnnRFCheckSolveCount, c_int64_t)
 
             allocate(ice_features_dp(nIceCells, nFeatures))
             ice_features_dp = real(ice_features, c_double)
