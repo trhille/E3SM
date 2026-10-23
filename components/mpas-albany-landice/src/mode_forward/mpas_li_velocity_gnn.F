@@ -33,6 +33,7 @@ module li_velocity_gnn
    use mpas_pool_routines
    use mpas_dmpar
    use mpas_log
+   use mpas_timer
    use mpi
 
    use li_setup
@@ -618,7 +619,7 @@ contains
          end do
       endif
 
-      ! --- Filter to ice-only cells and run inference on rank 0 ---
+      ! --- Filter to ice-only cells on rank 0 ---
       if (myRank == 0) then
          ! Identify ice cells (thickness > 0, feature 4)
          allocate(ice_map(nCellsGlobal))
@@ -649,45 +650,61 @@ contains
               realArgs=(/dble(ice_features(1, 1)), dble(ice_features(1, 2)), dble(ice_features(1, 4))/))
          call mpas_log_write('nIceCells=$i, nIceEdgesDirected will be computed next', &
               intArgs=(/nIceCells/))
+      endif
 
-         ! --- Random-forest error check (optional) ---
-         ! Flags this solve as likely high-error before spending time on GNN
-         ! inference. Uses the full ice-cell feature matrix (promoted to
-         ! double precision); li_rf_count_ones draws its own deterministic
-         ! random subsample internally from a per-solve seed, operating in
-         ! global-cell-ID order so the decision is independent of the
-         ! domain decomposition (number of MPI ranks/blocks).
-         fallbackInt = 0
-         if (rfCheckEnabled) then
-            nSample = max(1, nint(rfSampleFraction * real(nIceCells, RKIND)))
-            rfSeed = int(rfBaseSeed, c_int64_t) + int(gnnRFCheckSolveCount, c_int64_t)
+      ! --- Random-forest error check (optional) ---
+      ! Flags this solve as likely high-error before spending time on GNN
+      ! inference. Uses the full ice-cell feature matrix (promoted to
+      ! double precision); li_rf_count_ones draws its own deterministic
+      ! random subsample internally from a per-solve seed, operating in
+      ! global-cell-ID order so the decision is independent of the
+      ! domain decomposition (number of MPI ranks/blocks).
+      ! The timer start/stop below must run on every rank (not just rank 0,
+      ! where the actual work happens) because mpas_timer_write() is a
+      ! collective call at the end of the run -- every rank must build an
+      ! identical timer tree, or its MPI_Allreduce-based reductions
+      ! desynchronize across ranks. rfCheckEnabled is set identically on
+      ! every rank in li_velocity_gnn_init, so this guard is already symmetric.
+      if (rfCheckEnabled) call mpas_timer_start("gnn rf check")
+      if (myRank == 0 .and. rfCheckEnabled) then
+         nSample = max(1, nint(rfSampleFraction * real(nIceCells, RKIND)))
+         rfSeed = int(rfBaseSeed, c_int64_t) + int(gnnRFCheckSolveCount, c_int64_t)
 
-            allocate(ice_features_dp(nIceCells, nFeatures))
-            ice_features_dp = real(ice_features, c_double)
+         allocate(ice_features_dp(nIceCells, nFeatures))
+         ice_features_dp = real(ice_features, c_double)
 
-            rfErrX = li_rf_count_ones(RF_SLOT_X_C, ice_features_dp, nIceCells, nFeatures, nSample, &
-                                       rfSeed, rfOnesX, rfTiesX)
-            rfErrY = li_rf_count_ones(RF_SLOT_Y_C, ice_features_dp, nIceCells, nFeatures, nSample, &
-                                       rfSeed, rfOnesY, rfTiesY)
-            deallocate(ice_features_dp)
+         rfErrX = li_rf_count_ones(RF_SLOT_X_C, ice_features_dp, nIceCells, nFeatures, nSample, &
+                                    rfSeed, rfOnesX, rfTiesX)
+         rfErrY = li_rf_count_ones(RF_SLOT_Y_C, ice_features_dp, nIceCells, nFeatures, nSample, &
+                                    rfSeed, rfOnesY, rfTiesY)
+         deallocate(ice_features_dp)
 
-            if (rfErrX /= 0 .or. rfErrY /= 0) then
-               call log_rf_error('GNN RF error check failed: ')
-               err = 1
-            else
-               call mpas_log_write('GNN RF error check: nSample=$i x: ones=$i ties=$i, y: ones=$i ties=$i, threshold=$i', &
-                    intArgs=(/nSample, int(rfOnesX), int(rfTiesX), int(rfOnesY), int(rfTiesY), rfThreshold/))
-               if (int(rfOnesX) > rfThreshold .or. int(rfOnesY) > rfThreshold) then
-                  fallbackInt = 1
-               endif
+         if (rfErrX /= 0 .or. rfErrY /= 0) then
+            call log_rf_error('GNN RF error check failed: ')
+            err = 1
+         else
+            call mpas_log_write('GNN RF error check: nSample=$i x: ones=$i ties=$i, y: ones=$i ties=$i, threshold=$i', &
+                 intArgs=(/nSample, int(rfOnesX), int(rfTiesX), int(rfOnesY), int(rfTiesY), rfThreshold/))
+            if (int(rfOnesX) > rfThreshold .or. int(rfOnesY) > rfThreshold) then
+               fallbackInt = 1
             endif
          endif
+      endif
+      if (rfCheckEnabled) call mpas_timer_stop("gnn rf check")
 
-         ! If the random-forest error check flagged this solve, skip GNN
-         ! inference entirely; the caller (li_velocity_solve in
-         ! mpas_li_velocity.F) will fall back to the external dycore
-         ! instead of using global_velocity (left at its initialized value
-         ! of zero below).
+      ! --- GNN inference on rank 0 ---
+      ! If the random-forest error check flagged this solve, skip GNN
+      ! inference entirely; the caller (li_velocity_solve in
+      ! mpas_li_velocity.F) will fall back to the external dycore
+      ! instead of using global_velocity (left at its initialized value
+      ! of zero below).
+      ! fallbackInt is 0 on every rank at this point except possibly rank 0
+      ! (only rank 0 can set it to 1, above, and only rank 0 has reached this
+      ! point with any other value), so "fallbackInt == 0" evaluates .true.
+      ! symmetrically on every other rank, keeping this timer's start/stop
+      ! calls symmetric across ranks for the same reason as above.
+      if (fallbackInt == 0) call mpas_timer_start("gnn inference")
+      if (myRank == 0) then
          if (fallbackInt == 0) then
 
          ! Build ice-only bidirectional edge_index
@@ -782,6 +799,7 @@ contains
 
          deallocate(ice_map, ice_features)
       endif
+      if (fallbackInt == 0) call mpas_timer_stop("gnn inference")
 
       ! Broadcast the fallback decision (computed on rank 0 only) to all ranks
       call MPI_Bcast(fallbackInt, 1, MPI_INTEGER, 0, domain % dminfo % comm, mpiErr2)
