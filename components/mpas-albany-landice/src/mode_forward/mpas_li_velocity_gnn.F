@@ -413,6 +413,7 @@ contains
       integer, dimension(:,:), pointer :: dirichletVelocityMask
       real (kind=RKIND), dimension(:,:), pointer :: edgeNormalVectors
       real (kind=RKIND), pointer :: config_sea_level, config_ice_density, config_ocean_density
+      real (kind=RKIND), pointer :: config_dynamic_thickness
 
       ! Local feature assembly
       real (kind=RKIND), allocatable :: local_features(:,:)  ! (nLocalOwned, nFeatures)
@@ -527,6 +528,7 @@ contains
       call mpas_pool_get_config(liConfigs, 'config_sea_level', config_sea_level)
       call mpas_pool_get_config(liConfigs, 'config_ice_density', config_ice_density)
       call mpas_pool_get_config(liConfigs, 'config_ocean_density', config_ocean_density)
+      call mpas_pool_get_config(liConfigs, 'config_dynamic_thickness', config_dynamic_thickness)
 
       ! --- Assemble local node features ---
       allocate(local_features(nLocalOwned, nFeatures))
@@ -623,11 +625,18 @@ contains
 
       ! --- Filter to ice-only cells on rank 0 ---
       if (myRank == 0) then
-         ! Identify ice cells (thickness > 0, feature 4)
+         ! Identify ice cells using the same config_dynamic_thickness threshold
+         ! li_mask.F uses for its DynamicIce bit, rather than a bare thickness > 0.
+         ! RK's SSP thickness blending (mpas_li_time_integration_fe_rk.F) can leave
+         ! retreated cells at a roundoff-level positive thickness instead of exactly
+         ! 0; a bare "> 0" test here would still classify those as ice-covered and
+         ! feed them to the GNN, which then assigns them a stale/smeared velocity
+         ! instead of the 0 a retreated cell should get. feature 4 is thickness in
+         ! km (see local_features(iCell, 4) above), so convert the threshold to km.
          allocate(ice_map(nCellsGlobal))
          nIceCells = 0
          do iCell = 1, nCellsGlobal
-            if (global_features(iCell, 4) > 0.0_RKIND) then  ! thickness in km
+            if (global_features(iCell, 4) > config_dynamic_thickness / 1000.0_RKIND) then
                nIceCells = nIceCells + 1
                ice_map(iCell) = nIceCells - 1  ! 0-based compact index
             else
@@ -859,15 +868,20 @@ contains
       ! from the ice cell rather than averaging with zero. This allows
       ! advection to transport ice into empty cells, analogous to how Albany
       ! provides velocity on its boundary edges.
+      ! Use the same config_dynamic_thickness threshold as the ice-cell filter
+      ! above (rather than a bare thickness > 0) so a recently-retreated cell
+      ! with roundoff-level positive thickness (possible with RK's SSP
+      ! thickness blending) is treated as ice-free here too, consistent with
+      ! uReconstructX/Y already being 0 there.
       do iEdge = 1, nEdges
          cell1 = cellsOnEdge(1, iEdge)
          cell2 = cellsOnEdge(2, iEdge)
          do k = 1, nVertInterfacesLocal
-            if (thickness(cell1) > 0.0_RKIND .and. thickness(cell2) <= 0.0_RKIND) then
+            if (thickness(cell1) > config_dynamic_thickness .and. thickness(cell2) <= config_dynamic_thickness) then
                ! Margin edge: only cell1 has ice, use its velocity
                xVelEdge = uReconstructX(k, cell1)
                yVelEdge = uReconstructY(k, cell1)
-            else if (thickness(cell2) > 0.0_RKIND .and. thickness(cell1) <= 0.0_RKIND) then
+            else if (thickness(cell2) > config_dynamic_thickness .and. thickness(cell1) <= config_dynamic_thickness) then
                ! Margin edge: only cell2 has ice, use its velocity
                xVelEdge = uReconstructX(k, cell2)
                yVelEdge = uReconstructY(k, cell2)
