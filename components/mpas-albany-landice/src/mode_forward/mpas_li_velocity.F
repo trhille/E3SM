@@ -135,6 +135,7 @@ contains
       logical, pointer :: config_do_restart
       character (len=StrKIND), pointer :: config_gnn_solver_init
       logical, pointer :: config_gnn_rf_check
+      logical, pointer :: config_gnn_switch_solver_by_frequency
       integer :: err_tmp
 
       err = 0
@@ -158,6 +159,7 @@ contains
           call mpas_pool_get_config(liConfigs, 'config_do_restart', config_do_restart)
           call mpas_pool_get_config(liConfigs, 'config_gnn_solver_init', config_gnn_solver_init)
           call mpas_pool_get_config(liConfigs, 'config_gnn_rf_check', config_gnn_rf_check)
+          call mpas_pool_get_config(liConfigs, 'config_gnn_switch_solver_by_frequency', config_gnn_switch_solver_by_frequency)
           if (.not. config_do_restart) then
              select case (trim(config_gnn_solver_init))
              case ('FO')
@@ -178,12 +180,16 @@ contains
                 err = 1
              end select
           endif
-          ! The random-forest error check (config_gnn_rf_check) can fall back to
-          ! the external dycore on any GNN solve, including on a restart, so the
-          ! external dycore must stay initialized whenever the check is enabled --
-          ! even if config_gnn_solver_init did not already initialize it above.
-          gnnExternalAvailable = gnnUseExternalInitialSolve .or. config_gnn_rf_check
-          if (config_gnn_rf_check .and. .not. gnnUseExternalInitialSolve) then
+          ! The random-forest error check (config_gnn_rf_check) and the
+          ! frequency-based switch (config_gnn_switch_solver_by_frequency) can
+          ! each fall back to the external dycore on any GNN solve, including
+          ! on a restart, so the external dycore must stay initialized
+          ! whenever either is enabled -- even if config_gnn_solver_init did
+          ! not already initialize it above.
+          gnnExternalAvailable = gnnUseExternalInitialSolve .or. config_gnn_rf_check .or. &
+             config_gnn_switch_solver_by_frequency
+          if ((config_gnn_rf_check .or. config_gnn_switch_solver_by_frequency) .and. &
+              .not. gnnUseExternalInitialSolve) then
              call li_velocity_external_init(domain, err_tmp)
              err = ior(err, err_tmp)
           endif
