@@ -442,8 +442,9 @@ module li_core
       !
       !-----------------------------------------------------------------
       integer, pointer :: timestepNumber
+      integer, pointer :: gnnFrequencySwitchTimestepCount
       type (block_type), pointer :: block
-      type (mpas_pool_type), pointer :: geometryPool, meshPool, timeAveragingPool
+      type (mpas_pool_type), pointer :: geometryPool, meshPool, velocityPool, timeAveragingPool
       integer, pointer :: config_stats_interval   !< interval (number of timesteps) for writing stats
       character(len=StrKIND), pointer :: config_restart_timestamp_name
       character(len=StrKIND), pointer :: config_velocity_solver
@@ -471,6 +472,9 @@ module li_core
       call mpas_timer_start("land ice core run")
 
       ! initialize time step number.  initial time is 0
+      ! (gnnFrequencySwitchTimestepCount is NOT reset here, unlike timestepNumber,
+      ! so its restart-read value persists across restarts -- see
+      ! config_gnn_switch_solver_by_frequency)
       block => domain % blocklist
       do while(associated(block))
          call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
@@ -498,6 +502,13 @@ module li_core
             call mpas_pool_get_subpool(block % structs, 'mesh', meshPool)
             call mpas_pool_get_array(meshPool, 'timestepNumber', timestepNumber)
             timestepNumber = timestepNumber + 1
+            ! gnnFrequencySwitchTimestepCount persists across restarts (unlike
+            ! timestepNumber, which is reset to 0 above on every li_core_run
+            ! call) so config_gnn_switch_solver_by_frequency's per-timestep
+            ! Bernoulli draw only depends on the timestep itself.
+            call mpas_pool_get_subpool(block % structs, 'velocity', velocityPool)
+            call mpas_pool_get_array(velocityPool, 'gnnFrequencySwitchTimestepCount', gnnFrequencySwitchTimestepCount)
+            gnnFrequencySwitchTimestepCount = gnnFrequencySwitchTimestepCount + 1
             block => block % next
          end do
 

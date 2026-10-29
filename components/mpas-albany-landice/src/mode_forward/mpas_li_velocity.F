@@ -384,6 +384,11 @@ contains
       logical :: gnnDoExternalInitSolve, gnnDoSIAInitSolve, gnnDoSkipInitSolve
       logical, pointer :: config_gnn_rf_check
       logical :: gnnDoRFCheck, gnnFallback
+      logical, pointer :: config_gnn_switch_solver_by_frequency
+      real (kind=RKIND), pointer :: config_solver_switching_frequency
+      integer, pointer :: config_solver_switching_seed
+      integer, pointer :: gnnFrequencySwitchTimestepCount
+      logical :: gnnDoFrequencySwitch
       logical :: callCalculateBetaNow
 
       call mpas_timer_start("velocity solve")
@@ -415,6 +420,25 @@ contains
          call mpas_pool_get_config(liConfigs, 'config_gnn_rf_check', config_gnn_rf_check)
          gnnDoRFCheck = config_gnn_rf_check .and. &
             .not. (gnnDoExternalInitSolve .or. gnnDoSIAInitSolve .or. gnnDoSkipInitSolve)
+      endif
+
+      ! The RF-independent, frequency-based solver switch (for testing the
+      ! impact of solver switching without a trained UQ model) is mutually
+      ! exclusive with gnnDoRFCheck, enforced at init in li_velocity_gnn_init.
+      ! gnnFrequencySwitchTimestepCount is a restart-persistent scalar, identical
+      ! across every block/rank, so any block's pool can be used to fetch it.
+      gnnDoFrequencySwitch = .false.
+      if (trim(config_velocity_solver) == 'gnn') then
+         call mpas_pool_get_config(liConfigs, 'config_gnn_switch_solver_by_frequency', config_gnn_switch_solver_by_frequency)
+         if (config_gnn_switch_solver_by_frequency .and. &
+             .not. (gnnDoExternalInitSolve .or. gnnDoSIAInitSolve .or. gnnDoSkipInitSolve)) then
+            call mpas_pool_get_config(liConfigs, 'config_solver_switching_frequency', config_solver_switching_frequency)
+            call mpas_pool_get_config(liConfigs, 'config_solver_switching_seed', config_solver_switching_seed)
+            call mpas_pool_get_subpool(domain % blocklist % structs, 'velocity', velocityPool)
+            call mpas_pool_get_array(velocityPool, 'gnnFrequencySwitchTimestepCount', gnnFrequencySwitchTimestepCount)
+            gnnDoFrequencySwitch = (splitmix64_unit_real(config_solver_switching_seed, gnnFrequencySwitchTimestepCount) &
+                                     < config_solver_switching_frequency)
+         endif
       endif
 
       ! calculate_beta resets betaSolve from the raw input 'beta' field, discarding
@@ -495,11 +519,12 @@ contains
       if ( (trim(config_velocity_solver) == 'L1L2') .or. &
            (trim(config_velocity_solver) == 'FO') .or. &
            (trim(config_velocity_solver) == 'Stokes') .or. &
-           gnnDoExternalInitSolve .or. gnnDoRFCheck ) then
+           gnnDoExternalInitSolve .or. gnnDoRFCheck .or. gnnDoFrequencySwitch ) then
 
          ! External solvers may not be able to cope with no ice in the domain, so determine if that is the case.
          ! Also needed for a 'gnn' run with config_gnn_rf_check, since we don't know until after the random-forest
          ! check (inside the 'gnn' case below) whether this solve will fall back to the external dycore.
+         ! gnnDoFrequencySwitch solves also need this, since they fall back to the external dycore directly.
          ! Don't bother checking this with SIA because it requires an extra global reduce
          maxThicknessOnProc = 0.0_RKIND  ! initialize to
          procDynamicVertexMaskChanged = 0
@@ -579,7 +604,8 @@ contains
          ! solve where the external dycore did NOT run, so that information
          ! is not lost by the time the external dycore is eventually called
          ! again (see the 'gnn' case below and li_velocity_external_solve).
-         if (gnnDoRFCheck .and. (anyDynamicVertexMaskChanged == 1 .or. dirichletMaskChanged == 1)) then
+         if ((gnnDoRFCheck .or. gnnDoFrequencySwitch) .and. &
+             (anyDynamicVertexMaskChanged == 1 .or. dirichletMaskChanged == 1)) then
             gnnMaskChangedSinceExternal = .true.
          endif
 
@@ -668,6 +694,24 @@ contains
                ! config_gnn_solver_init = 'none': skip the initial velocity solve
                ! and leave the velocity field as initialized.
                call mpas_log_write("Notice: Skipping initial GNN-run velocity solve (config_gnn_solver_init = 'none').")
+            elseif (gnnDoFrequencySwitch) then
+               ! config_gnn_switch_solver_by_frequency triggered a fallback for
+               ! this timestep based only on the restart-persistent timestep
+               ! counter and seed -- no GNN inference needed at all this step.
+               call calculate_beta(block, err_tmp)
+               err = ior(err, err_tmp)
+               call run_gnn_external_fallback_solve(meshPool, geometryPool, thermalPool, hydroPool, scratchPool, &
+                  velocityPool, maxThicknessAllProcs, config_dynamic_thickness, &
+                  "config_gnn_switch_solver_by_frequency triggered; using external dycore instead of GNN for this timestep.", &
+                  err_tmp)
+               ! See the matching comment in the gnnFallback branch below: mask
+               ! changes accumulated across intervening GNN-only solves must be
+               ! surfaced here so the external dycore's FEM grid gets regenerated.
+               if (gnnMaskChangedSinceExternal) then
+                  anyDynamicVertexMaskChanged = 1
+                  dirichletMaskChanged = 1
+                  gnnMaskChangedSinceExternal = .false.
+               endif
             else
                ! Ordinary GNN solve.  If config_gnn_rf_check is enabled,
                ! li_velocity_gnn_solve runs the random-forest error check on
@@ -1027,6 +1071,55 @@ contains
       endif
 
    end subroutine run_gnn_external_fallback_solve
+
+
+!***********************************************************************
+!
+!  function splitmix64_unit_real
+!
+!> \brief  Deterministic hash-based pseudorandom draw in [0,1)
+!> \author Trevor Hillebrand
+!> \date   October 2026
+!> \details
+!>  Combines an integer seed and counter into a 64-bit key via the SplitMix64
+!>  mix function, and scales the result to a real in [0,1). Used by
+!>  config_gnn_switch_solver_by_frequency's per-timestep Bernoulli draw: given
+!>  the same seed and a restart-persistent timestep counter
+!>  (gnnFrequencySwitchTimestepCount), every rank and every restart of a run
+!>  computes the identical value with no communication and no stored RNG
+!>  state, unlike Fortran's intrinsic random_number (unseeded, not
+!>  restart-safe). This is intentionally independent of any FTorch-gated RNG
+!>  used elsewhere (e.g. the random-forest check's C++ std::mt19937_64),
+!>  since this switch must not require FTorch's forest-loading machinery.
+!
+!-----------------------------------------------------------------------
+
+   function splitmix64_unit_real(seed, counter) result(u)
+
+      integer, intent(in) :: seed
+      integer, intent(in) :: counter
+      real (kind=RKIND) :: u
+
+      integer (kind=8) :: key
+      integer (kind=8), parameter :: gammaConst  = -7046029254386353131_8  ! 0x9E3779B97F4A7C15
+      integer (kind=8), parameter :: mixConst1   = -4658895280553007687_8 ! 0xBF58476D1CE4E5B9
+      integer (kind=8), parameter :: mixConst2   = -7723592293110705685_8 ! 0x94D049BB133111EB
+      integer (kind=8), parameter :: mask53      = 9007199254740991_8     ! 2^53 - 1
+      real (kind=RKIND), parameter :: twoPow53   = 9007199254740992.0_RKIND ! 2^53
+
+      key = int(seed, 8) + int(counter, 8) * gammaConst
+
+      key = ieor(key, ishft(key, -30))
+      key = key * mixConst1
+      key = ieor(key, ishft(key, -27))
+      key = key * mixConst2
+      key = ieor(key, ishft(key, -31))
+
+      ! Take the low 53 bits (always non-negative) so the result maps exactly
+      ! onto RKIND's mantissa precision and lands strictly in [0,1).
+      u = real(iand(key, mask53), RKIND) / twoPow53
+
+   end function splitmix64_unit_real
 
 
 !***********************************************************************

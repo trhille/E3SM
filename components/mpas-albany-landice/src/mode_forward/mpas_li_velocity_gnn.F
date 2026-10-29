@@ -173,6 +173,8 @@ contains
       real (kind=RKIND), pointer :: config_gnn_rf_sample_fraction
       integer, pointer :: config_gnn_rf_threshold
       integer, pointer :: config_gnn_rf_seed
+      logical, pointer :: config_gnn_switch_solver_by_frequency
+      real (kind=RKIND), pointer :: config_solver_switching_frequency
       type (block_type), pointer :: block
       type (mpas_pool_type), pointer :: meshPool
       integer, pointer :: nCellsSolve, nEdgesSolve
@@ -348,6 +350,41 @@ contains
 
          call mpas_log_write('GNN random-forest error check enabled.  sample_fraction=$r threshold=$i seed=$i', &
               realArgs=(/rfSampleFraction/), intArgs=(/rfThreshold, rfBaseSeed/))
+      endif
+
+      ! --- Optionally validate the RF-independent, frequency-based solver
+      ! switch (config_gnn_switch_solver_by_frequency). The actual per-timestep
+      ! switching decision is made in mpas_li_velocity.F (it needs only the
+      ! restart-persistent timestep counter, not any GNN-specific state); this
+      ! module only validates the config and enforces mutual exclusivity with
+      ! the random-forest check above, since both are ways of choosing when a
+      ! gnn solve falls back to the external dycore.
+      call mpas_pool_get_config(liConfigs, 'config_gnn_switch_solver_by_frequency', config_gnn_switch_solver_by_frequency)
+      if (config_gnn_switch_solver_by_frequency) then
+         if (rfCheckEnabled) then
+            call mpas_log_write('config_gnn_rf_check and config_gnn_switch_solver_by_frequency ' // &
+               'cannot both be enabled -- they are two independent, mutually exclusive ways ' // &
+               'of choosing when a gnn solve falls back to the external dycore.', MPAS_LOG_CRIT)
+            err = 1
+            return
+         endif
+
+         call mpas_pool_get_config(liConfigs, 'config_solver_switching_frequency', config_solver_switching_frequency)
+         if (config_solver_switching_frequency < 0.0_RKIND .or. config_solver_switching_frequency > 1.0_RKIND) then
+            call mpas_log_write('config_solver_switching_frequency must be between 0 and 1, inclusive.', MPAS_LOG_CRIT)
+            err = 1
+            return
+         endif
+
+#ifndef USE_EXTERNAL_FIRSTORDER
+         call mpas_log_write('config_gnn_switch_solver_by_frequency = .true. requires compiling with the external FO ' // &
+            'dycore (USE_EXTERNAL_FIRSTORDER), since a switched timestep falls back to it.', MPAS_LOG_CRIT)
+         err = 1
+         return
+#endif
+
+         call mpas_log_write('GNN frequency-based solver switching enabled.  frequency=$r', &
+              realArgs=(/config_solver_switching_frequency/))
       endif
 
       gnn_initialized = .true.

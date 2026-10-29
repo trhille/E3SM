@@ -104,6 +104,18 @@
 		            description="Base seed for the deterministic random subsampling and tie-breaking used by the random-forest error check. The solve counter is added to this seed so that each solve draws an independent sample. Only used if config_gnn_rf_check = .true.."
 		            possible_values="Any integer."
 		/>
+		<nml_option name="config_gnn_switch_solver_by_frequency" type="logical" default_value=".false." units="unitless"
+		            description="If true, each ordinary GNN timestep independently has probability config_solver_switching_frequency of falling back to the external ('FO') dycore for that solve, based on a deterministic hash of a restart-persistent timestep counter and config_solver_switching_seed. This is for testing the impact of solver switching without a trained random-forest UQ model; it is mutually exclusive with config_gnn_rf_check. Requires compiling with the external FO dycore."
+		            possible_values="'true', 'false'"
+		/>
+		<nml_option name="config_solver_switching_frequency" type="real" default_value="0.1" units="timestep^-1"
+		            description="Frequency of external-dycore ('FO') fallback solves, in FO solves per ordinary GNN timestep, when config_gnn_switch_solver_by_frequency = .true.. Each timestep independently falls back with probability config_solver_switching_frequency (a Bernoulli draw, not an exact period), so the realized number of FO solves over N timesteps is random with mean N*config_solver_switching_frequency. 0 never switches; 1 always switches. Only used if config_gnn_switch_solver_by_frequency = .true.."
+		            possible_values="Any real number between 0 and 1, inclusive."
+		/>
+		<nml_option name="config_solver_switching_seed" type="integer" default_value="42" units="unitless"
+		            description="Seed for the deterministic per-timestep Bernoulli draw used by config_gnn_switch_solver_by_frequency. Only used if config_gnn_switch_solver_by_frequency = .true.."
+		            possible_values="Any integer."
+		/>
 		<nml_option name="config_sia_tangent_slope_calculation" type="character" default_value="from_vertex_barycentric" units="unitless"
 		            description="Selection of the method for calculating the tangent component of surface slope at edges needed by the SIA velocity solver.
 'from_vertex_barycentric' interpolates upperSurface values from cell centers to vertices using the barycentric interpolation routine in operators (mpas_cells_to_points_using_baryweights) and then calculates the slope between vertices.  It works for obtuse triangles, but will not work correctly across the edges of periodic meshes.
@@ -1000,6 +1012,10 @@
                              check's random subsampling is reproducible regardless of where a run
                              is restarted (see config_gnn_rf_check) -->
                         <var name="gnnRFCheckSolveCount" packages="higherOrderVelocity"/>
+                        <!-- gnnFrequencySwitchTimestepCount must persist across restarts so the
+                             switching sequence for config_gnn_switch_solver_by_frequency only
+                             depends on the timestep itself, not on where a run is restarted -->
+                        <var name="gnnFrequencySwitchTimestepCount" packages="higherOrderVelocity"/>
                         <!-- fields only needed by SGH -->
                         <!-- SGH forcing: -->
                         <var name="groundedBasalMassBal" packages="hydro"/>  <!-- This is only needed if config_SGH_basal_melt='thermal', but adding it always-->
@@ -1798,6 +1814,10 @@ is the value of that variable from the *previous* time level!
                 />
                 <var name="gnnRFCheckSolveCount"             type="integer"  dimensions="Time" default_value="0"
                         description="count of GNN velocity solves on which the random-forest error check (config_gnn_rf_check) has run, used to derive a restart-persistent per-solve seed for its random subsampling. Persists across restarts so sampling is reproducible for a given config_gnn_rf_seed regardless of where a run is restarted."
+                        packages="higherOrderVelocity"
+                />
+                <var name="gnnFrequencySwitchTimestepCount"  type="integer"  dimensions="Time" default_value="0"
+                        description="count of timesteps completed, used to derive a restart-persistent per-timestep seed for config_gnn_switch_solver_by_frequency's Bernoulli draw. Unlike timestepNumber, this persists across restarts so the switching sequence for a given config_solver_switching_seed only depends on the timestep itself, not on where a run was restarted."
                         packages="higherOrderVelocity"
                 />
                 <var name="albanyVelocityError"              type="integer"  dimensions="Time"
