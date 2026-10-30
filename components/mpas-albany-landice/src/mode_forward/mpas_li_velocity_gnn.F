@@ -740,17 +740,23 @@ contains
       endif
       if (rfCheckEnabled) call mpas_timer_stop("gnn rf check")
 
+      ! Broadcast the fallback decision (computed on rank 0 only) to all ranks.
+      ! This must happen before the "gnn inference" timer below: that timer is
+      ! gated on fallbackInt, and if only rank 0 knew the decision, rank 0 would
+      ! create the timer node later than the other ranks, giving the ranks
+      ! different timer trees and scrambling the reductions in mpas_timer_write().
+      call MPI_Bcast(fallbackInt, 1, MPI_INTEGER, 0, domain % dminfo % comm, mpiErr2)
+      useFallback = (fallbackInt == 1)
+      if (useFallback) gnnFallbackCount = gnnFallbackCount + 1
+
       ! --- GNN inference on rank 0 ---
       ! If the random-forest error check flagged this solve, skip GNN
       ! inference entirely; the caller (li_velocity_solve in
       ! mpas_li_velocity.F) will fall back to the external dycore
       ! instead of using global_velocity (left at its initialized value
       ! of zero below).
-      ! fallbackInt is 0 on every rank at this point except possibly rank 0
-      ! (only rank 0 can set it to 1, above, and only rank 0 has reached this
-      ! point with any other value), so "fallbackInt == 0" evaluates .true.
-      ! symmetrically on every other rank, keeping this timer's start/stop
-      ! calls symmetric across ranks for the same reason as above.
+      ! fallbackInt is now identical on every rank, so this timer's
+      ! start/stop calls are symmetric across ranks.
       if (fallbackInt == 0) call mpas_timer_start("gnn inference")
       if (myRank == 0) then
          if (fallbackInt == 0) then
@@ -848,11 +854,6 @@ contains
          deallocate(ice_map, ice_features)
       endif
       if (fallbackInt == 0) call mpas_timer_stop("gnn inference")
-
-      ! Broadcast the fallback decision (computed on rank 0 only) to all ranks
-      call MPI_Bcast(fallbackInt, 1, MPI_INTEGER, 0, domain % dminfo % comm, mpiErr2)
-      useFallback = (fallbackInt == 1)
-      if (useFallback) gnnFallbackCount = gnnFallbackCount + 1
 
       ! If this solve was flagged, skip the scatter/fill/halo-exchange below:
       ! the caller (li_velocity_solve in mpas_li_velocity.F) will overwrite
